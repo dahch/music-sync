@@ -4,12 +4,61 @@ use std::time::SystemTime;
 
 pub type Blake3Hash = [u8; 32];
 
+pub mod epoch_seconds {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let secs = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        secs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(UNIX_EPOCH + Duration::from_secs(secs))
+    }
+}
+
+pub mod epoch_seconds_opt {
+    use super::epoch_seconds;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S>(time: &Option<SystemTime>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match time {
+            Some(t) => epoch_seconds::serialize(t, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<SystemTime>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs: Option<u64> = Option::deserialize(deserializer)?;
+        match secs {
+            Some(s) => Ok(Some(UNIX_EPOCH + Duration::from_secs(s))),
+            None => Ok(None),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicFile {
     pub relative_path: PathBuf,
     pub absolute_path: PathBuf,
     pub size_bytes: u64,
+    #[serde(with = "epoch_seconds")]
     pub modified_at: SystemTime,
     pub extension: String,
     pub content_hash: Option<Blake3Hash>,
@@ -151,6 +200,7 @@ impl ComparisonEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ComparisonResult {
     pub entries: Vec<ComparisonEntry>,
+    #[serde(with = "epoch_seconds")]
     pub scanned_at: SystemTime,
     pub source_root: PathBuf,
     pub destination_root: PathBuf,
@@ -221,6 +271,7 @@ pub struct SyncProfile {
     pub source_root: PathBuf,
     pub destination_root: PathBuf,
     pub default_comparison_level: ComparisonLevel,
+    #[serde(with = "epoch_seconds_opt")]
     pub last_synced_at: Option<SystemTime>,
 }
 
