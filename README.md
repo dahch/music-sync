@@ -7,28 +7,31 @@ source folder and a portable device (DAC/USB storage).
 
 ## Architecture
 
-Full architecture spec: [docs/spec-music-sync-app.md](spec-music-sync-app.md)
+Full architecture spec: [spec-music-sync-app.md](./spec-music-sync-app.md)
 
 ```
 src-tauri/
 ├── crates/
-│   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)
-│   ├── scanner/         # Filesystem scanner (tokio async I/O)
-│   ├── comparator/      # Diff logic (ADR-002: 3-level comparison)
-│   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes)
-│   └── history/         # SQLite-backed sync history (rusqlite)
-├── migrations/          # SQL migration files
-├── capabilities/        # Tauri v2 capability definitions
-├── src/                 # Tauri entry point (main.rs + lib.rs)
+│   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)   ✅
+│   ├── scanner/         # Filesystem scanner (tokio async I/O) — scaffold             🔧
+│   ├── comparator/      # Diff logic (ADR-002: 3-level comparison) — scaffold         🔧
+│   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes) — scaffold   🔧
+│   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
+├── migrations/          # SQL migration files (001_sync_tables.sql)
+├── capabilities/        # Tauri v2 capability definitions (dialog plugin + core)
+├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
+├── src/                 # Tauri entry point (main.rs + lib.rs) — greet command only   🔧
 ├── Cargo.toml           # Rust workspace root
-└── tauri.conf.json      # Tauri v2 configuration
+└── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 
 src/                     # Frontend (Feature-Sliced Design)
-├── app/                 # App entry, providers, routing
-├── pages/               # Full page compositions (home, diff, history...)
-├── features/            # Business features (scanner, comparator, copy-engine, history)
-├── entities/            # Domain entity TS types (music-file, sync-profile)
-└── shared/              # Reusable: UI components, lib, API wrappers, Zustand stores
+├── app/                 # App entry (main.tsx + App.tsx), providers (empty)
+├── pages/               # home (counter scaffold)                                     🔧
+├── features/            # scanner, comparator, copy-engine, history — all empty stubs  🔧
+├── entities/            # TS types: music-file, sync-profile                          ✅
+└── shared/              # Zustand store (counter), api/lib/ui — all empty stubs        🔧
+
+Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```
 
 ## Development
@@ -52,7 +55,7 @@ xcode-select --install
 
 **Linux:**
 ```bash
-sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
 
 ### Setup
@@ -60,6 +63,12 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 ```bash
 pnpm install
 ```
+
+### Environment Variables
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `TAURI_DEV_HOST` | `string` | unset | Set to network interface (e.g., `0.0.0.0`) to expose Vite dev server to other devices (e.g., testing on a real device). When set, enables WebSocket HMR on port 1421. |
 
 ### Run (dev mode)
 
@@ -89,9 +98,26 @@ cargo test --manifest-path src-tauri/Cargo.toml --workspace
 
 ### Scanner CLI debug binary
 
+The scanner crate has a CLI binary for testing filesystem walk without the UI:
+
 ```bash
 cargo run -p music-sync-scanner --bin scanner-cli
 ```
+
+Currently prints a placeholder string — real scan logic pending.
+
+## CI
+
+Multi-platform build workflow (`.github/workflows/build.yml`) runs on every push/PR to `main`:
+
+| Platform | Target | Runner |
+|---|---|---|
+| macOS (Apple Silicon) | `aarch64-apple-darwin` | `macos-latest` |
+| macOS (Intel) | `x86_64-apple-darwin` | `macos-13` |
+| Windows | `x86_64-pc-windows-msvc` | `windows-latest` |
+| Linux | `x86_64-unknown-linux-gnu` | `ubuntu-latest` |
+
+Steps: install Rust, pnpm, Node.js 22, system deps (Linux only: webkit2gtk, GTK3, AppIndicator, librsvg, patchelf), `pnpm install`, `pnpm build`, `cargo build --target ${{ matrix.target }}`.
 
 ## License
 
