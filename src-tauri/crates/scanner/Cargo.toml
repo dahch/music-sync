@@ -1,0 +1,13 @@
+[package]
+name = "music-sync-scanner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+music-sync-domain = { path = "../domain" }
+tokio = { version = "1", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "scanner-cli"
+path = "src/main.rs"
