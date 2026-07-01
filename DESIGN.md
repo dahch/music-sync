@@ -37,8 +37,8 @@
 │                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
 │  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│  │
-│  │ (base)   │  │ (tokio)  │  │(scaffold)│  │ (scaffold) │  │
-│  │ 8 types  │  │ 15 tests │  │          │  │            │  │
+│  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │ (scaffold) │  │
+│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │            │  │
 │  │ serde    │  │ CLI bin  │  │          │  │            │  │
 │  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘  │
 │       │                                                     │
@@ -116,7 +116,29 @@ resolution.
 
 ### 4. Comparator Crate (`music-sync-comparator`)
 
-**Status:** Scaffold. No diff logic yet.
+**Status:** 🚧 Partial (Level 1+2 implemented, Level 3 pending).
+
+**Design patterns used:**
+- **Configurable struct:** `Comparator` holds `tolerance_mtime` (default 2s) and
+  exposes `with_mtime_tolerance()` for custom values.
+- **HashMap index:** source and destination `Vec<MusicFile>` are indexed by
+  `relative_path` into separate `HashMap`s before diffing.
+- **Cascading levels:**
+  - **Level 1 (Fast)** — path-only: matching keys are `Identical` regardless of
+    size/mtime. Sets the structural baseline.
+  - **Level 2 (Metadata, default)** — size + mtime comparison with configurable
+    tolerance to absorb FAT32/exFAT timestamp precision loss.
+  - **Level 3 (Strict)** — currently delegates to Metadata; BLAKE3 hash
+    comparison deferred to future work (ponytail marker `F3-01`).
+- **Orphan detection:** destination entries missing from source are emitted as
+  `Orphan` in a second pass over the destination map.
+- **Duplicate paths:** duplicate `relative_path` values within source or
+  destination are silently deduplicated (last wins via `HashMap`).
+
+**Test coverage:** 30 tests covering all four `DiffStatus` classifications,
+mtime tolerance boundaries, zero/large tolerance edge cases, Level 1 fast-path
+correctness, Strict delegation, duplicate/malformed input, and root path
+preservation.
 
 ### 5. Copy Engine Crate (`music-sync-copy-engine`)
 
@@ -160,16 +182,16 @@ progress_tx.send(ScanProgress)
 Vec<MusicFile>         ← collected results
 ```
 
-### Comparison Flow (not yet implemented)
+### Comparison Flow (implemented: L1+L2, L3 pending)
 
 ```
 Vec<MusicFile>(source) + Vec<MusicFile>(destination)
     ↓
 Index by relative_path (HashMap)
     ↓
-Cascading diff per ADR-002 (L1 → L2 → L3)
-    ↓
-Vec<ComparisonEntry> + ComparisonStats
+Cascading diff per ADR-002 (L1 → L2)
+    ↓ (L3 delegates to L2 until BLAKE3 hash is implemented)
+Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 ```
 
 ## External Dependencies
@@ -192,9 +214,9 @@ Vec<ComparisonEntry> + ComparisonStats
 
 | Layer | Tool | Tests |
 |-------|------|-------|
-| Domain logic | `cargo test` | 8 test modules, serde roundtrip + business logic |
+| Domain logic | `cargo test` | 9 test modules, serde roundtrip + business logic |
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
+| Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 12 tests, in-memory SQLite |
-| Comparator | — | None yet |
 | Copy Engine | — | None yet |
 | Frontend | — | None yet |

@@ -67,10 +67,16 @@ idempotency, error handling.
 
 ### 3. Diff/Comparator (`src-tauri/crates/comparator/`)
 
-**Status: 🔧 Scaffold only**
+**Status: 🚧 Partial (L1+L2 done, L3 pending)**
 
-- Placeholder function returning a string.
-- No comparison logic implemented yet.
+- `Comparator` struct with configurable mtime tolerance (default 2s).
+- Level 1 (Fast): path-only — matching keys are `Identical` regardless of size/mtime.
+- Level 2 (Metadata): size + mtime comparison with configurable tolerance.
+- Level 3 (Strict): currently delegates to Metadata; BLAKE3 hash comparison not yet implemented.
+- Duplicate `relative_path` values deduplicated silently (last wins via `HashMap`).
+
+**Test coverage:** 30 tests including new/orphan/identical/different, mtime tolerance boundaries,
+Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cases.
 
 ### 4. Copy Engine (`src-tauri/crates/copy_engine/`)
 
@@ -107,7 +113,7 @@ idempotency, error handling.
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 15 (scanner) + 12 (history) + domain tests = passes |
+| Rust test suite | 15 (scanner) + 30 (comparator) + 12 (history) + 34 (domain) = passes |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |

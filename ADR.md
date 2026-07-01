@@ -48,7 +48,7 @@ dominates React/TypeScript.
 ## ADR-002: Comparison Strategy — Cascading 3-Level Diff
 
 - **Date:** 2026-07-01
-- **Status:** Accepted (domain types exist; comparison logic not yet implemented)
+- **Status:** Accepted (domain types exist; comparator L1+L2 implemented, L3 pending)
 
 ### Context
 

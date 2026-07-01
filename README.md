@@ -14,7 +14,7 @@ src-tauri/
 ├── crates/
 │   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)   ✅
 │   ├── scanner/         # Filesystem scanner — tokio async I/O, progress, validation  ✅
-│   ├── comparator/      # Diff logic (ADR-002: 3-level comparison) — scaffold         🔧
+│   ├── comparator/      # Diff logic (ADR-002: 3-level comparison) — L1+L2 done, L3 pending  🚧
 │   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes) — scaffold   🔧
 │   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
