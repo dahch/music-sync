@@ -213,6 +213,9 @@ impl CopyTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProfile {
+    // ponytail: String en vez de Uuid del spec §5 — UUID viaja como string en JSON,
+    //            se evita dependencia uuid crate. La validación de formato UUID
+    //            queda delegada a la capa de persistencia si hace falta.
     pub id: String,
     pub name: String,
     pub source_root: PathBuf,
