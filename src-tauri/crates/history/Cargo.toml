@@ -1,0 +1,9 @@
+[package]
+name = "music-sync-history"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+music-sync-domain = { path = "../domain" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
