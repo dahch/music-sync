@@ -1,4 +1,5 @@
 use music_sync_domain::MusicFile;
+use serde::Serialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -6,7 +7,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 pub const DEFAULT_EXTENSIONS: &[&str] = &["mp3", "flac"];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScanProgress {
     pub files_found: u64,
     pub current_path: Option<PathBuf>,
