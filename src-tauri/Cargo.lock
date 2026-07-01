@@ -1832,7 +1832,6 @@ name = "music-sync-comparator"
 version = "0.1.0"
 dependencies = [
  "music-sync-domain",
- "serde",
 ]
 
 [[package]]
