@@ -13,7 +13,7 @@ Full architecture spec: [spec-music-sync-app.md](./spec-music-sync-app.md)
 src-tauri/
 ├── crates/
 │   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)   ✅
-│   ├── scanner/         # Filesystem scanner (tokio async I/O) — scaffold             🔧
+│   ├── scanner/         # Filesystem scanner — tokio async I/O, progress, validation  ✅
 │   ├── comparator/      # Diff logic (ADR-002: 3-level comparison) — scaffold         🔧
 │   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes) — scaffold   🔧
 │   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
@@ -101,10 +101,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --workspace
 The scanner crate has a CLI binary for testing filesystem walk without the UI:
 
 ```bash
-cargo run -p music-sync-scanner --bin scanner-cli
+cargo run -p music-sync-scanner --bin scanner-cli [path]
 ```
 
-Currently prints a placeholder string — real scan logic pending.
+Scans the given path (defaults to current directory) and prints file count and elapsed time. Path validation and progress reporting work the same as the library API.
 
 ## CI
 

@@ -1,0 +1,200 @@
+# DESIGN — MusicSync Technical Architecture
+
+> How the system is built. Reflects the current codebase, not future plans.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Frontend (React/TS)                       │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  app/     entry (main.tsx → App.tsx)                  │  │
+│  │  pages/   home (counter scaffold)                     │  │
+│  │  entities/ music-file, sync-profile (TS types)        │  │
+│  │  features/ scanner, comparator, copy-engine, history   │  │  ← all stubs
+│  │  shared/  store (Zustand counter), api/lib/ui stubs   │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Package: music-sync (pnpm)  ·  Vite dev on :1420            │
+│  State: Zustand (counter only)  ·  API layer: @tauri-apps/api│
+└──────────────────────────┬──────────────────────────────────┘
+                           │ Tauri IPC (invoke / events)
+┌──────────────────────────┴──────────────────────────────────┐
+│                    Tauri Rust Backend                         │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  src-tauri/                                            │  │
+│  │  ├── src/lib.rs      Tauri builder + greet command     │  │
+│  │  ├── src/main.rs     Platform entry point              │  │
+│  │  ├── capabilities/   default.json (core + dialog)      │  │
+│  │  ├── migrations/     001_sync_tables.sql               │  │
+│  │  ├── tauri.conf.json App configuration                 │  │
+│  │  └── crates/         Workspace members (5 crates)      │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────┴──────────────────────────────────┐
+│                    Rust Crates (workspace)                    │
+│                                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
+│  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│  │
+│  │ (base)   │  │ (tokio)  │  │(scaffold)│  │ (scaffold) │  │
+│  │ 8 types  │  │ 15 tests │  │          │  │            │  │
+│  │ serde    │  │ CLI bin  │  │          │  │            │  │
+│  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘  │
+│       │                                                     │
+│       └─────────────────┬───────────────────────────────────┘
+│                    ┌──────────┐                             │
+│                    │ history  │                             │
+│                    │ (rusqlite│                             │
+│                    │  bundled)│                             │
+│                    │ 12 tests │                             │
+│                    └──────────┘                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Layer Breakdown
+
+### 1. Domain Crate (`music-sync-domain`)
+
+**Purpose:** Shared type definitions used by all other crates and the Tauri
+IPC layer. No runtime dependencies beyond `serde`.
+
+**Key design choices:**
+- All types derive `Serialize`/`Deserialize` with `rename_all = "camelCase"`
+  for seamless JS interop via Tauri IPC.
+- `SyncProfile.id` is `String` (not `Uuid`) to avoid an extra dependency;
+  UUID validation is deferred to the persistence layer.
+- `Blake3Hash` is `[u8; 32]` — the raw 256-bit output length.
+- Helper methods (`needs_copy`, `is_terminal`, `toggle`, `mark_synced`),
+  constructors (`new`, `with_hash`), and aggregate logic (`compute_stats`)
+  are implemented on the types themselves rather than in service layers
+  (YAGNI until services exist).
+
+### 2. Scanner Crate (`music-sync-scanner`)
+
+**Purpose:** Recursive filesystem walk with extension filtering and progress
+streaming.
+
+**Design patterns used:**
+- **Struct-of-functions:** `Scanner` holds configuration (root path,
+  extensions); the `scan()` method is async and consumes `self`.
+- **Backpressure via channels:** Progress emitted through an unbounded
+  tokio `mpsc` channel. The channel is unbounded by design — the scanner
+  doesn't block on progress delivery, and the receiver can drop events if
+  it falls behind.
+- **Concurrent pair scan:** `scan_pair()` spawns two `scan()` tasks via
+  `tokio::try_join!` so source and destination are scanned in parallel.
+- **Error taxonomy:** `ScanError` uses distinct variants (`NotFound`,
+  `PermissionDenied`, etc.) that map directly to user-facing messages.
+  The `Display` impl produces copy describing each variant.
+
+**Key decisions (ponytail markers):**
+- 20k-file benchmark uses local SSD — may be slow on network/CI filesystems.
+- Extension matching is case-insensitive by lowercasing; no Unicode
+  normalization.
+
+### 3. History Crate (`music-sync-history`)
+
+**Purpose:** SQLite schema management and (future) CRUD for sync history.
+
+**Design patterns used:**
+- **Embedded migration system:** Linear version sequence stored in
+  `_schema_version` table. Migrations are Rust string constants compiled
+  via `include_str!()` from `.sql` files in `src-tauri/migrations/`.
+- **Idempotent runs:** `MAX(version)` check before each migration —
+  re-running is safe.
+- **Bundled SQLite:** `rusqlite` with `bundled` feature so no system
+  SQLite is required.
+
+**Schema (current migration `001_sync_tables.sql`):**
+- `sync_profiles` — saved source/destination pairs.
+- `sync_history` — individual sync run records.
+- `_schema_version` — migration tracking (internal).
+
+**Not implemented:** CRUD operations, query layer, app data directory
+resolution.
+
+### 4. Comparator Crate (`music-sync-comparator`)
+
+**Status:** Scaffold. No diff logic yet.
+
+### 5. Copy Engine Crate (`music-sync-copy-engine`)
+
+**Status:** Scaffold. No copy logic yet.
+
+### 6. Tauri App Crate (`music-sync`)
+
+**Purpose:** Glue between Rust crates and the frontend.
+
+**Current state:**
+- Registers `tauri-plugin-dialog` for native file dialogs.
+- Exposes one command (`greet`) — placeholder for future real commands.
+- Window title set at runtime: "MusicSync — scaffolding OK".
+- Capability `default.json` grants `core:default` + `dialog:default`.
+
+### 7. Frontend (`src/`)
+
+**Purpose:** React UI following Feature-Sliced Design.
+
+**Current state:**
+- **Entities layer only:** TypeScript interfaces mirror all domain types.
+  Notable: `CopyStatus` uses a tagged union (`{ Failed: string } | "Pending" | ...`
+  to match Rust's `enum` with data in serde JSON.
+- **Store:** Zustand `useAppStore` with a counter — proof of concept.
+- **Everything else:** Empty barrel files (`export {};`).
+- **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
+
+## Data Flows
+
+### Scan Flow (implemented)
+
+```
+User triggers scan (future Tauri command)
+    ↓
+Scanner::validate()    ← checks path exists + is readable dir
+    ↓
+Scanner::scan()        ← async recursive walk with tokio::fs
+    ↓ (for each file)
+progress_tx.send(ScanProgress)
+    ↓
+Vec<MusicFile>         ← collected results
+```
+
+### Comparison Flow (not yet implemented)
+
+```
+Vec<MusicFile>(source) + Vec<MusicFile>(destination)
+    ↓
+Index by relative_path (HashMap)
+    ↓
+Cascading diff per ADR-002 (L1 → L2 → L3)
+    ↓
+Vec<ComparisonEntry> + ComparisonStats
+```
+
+## External Dependencies
+
+| Dependency | Version | Purpose | Why this one |
+|---|---|---|---|
+| `tauri` | 2 | App framework | ADR-001 |
+| `tauri-plugin-dialog` | 2 | Native file dialogs | OS-native picker |
+| `serde` / `serde_json` | 1 | Serialization | Tauri IPC requires serde |
+| `tokio` | 1 | Async runtime | Scanner I/O concurrency |
+| `rusqlite` | 0.31 | SQLite | Embedded DB (bundled) |
+| `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
+| `zustand` | ^5 | State management | ADR-005 |
+| `@tauri-apps/api` | ^2 | Tauri IPC bindings | Required by Tauri |
+| `tempfile` | 3 (dev) | Temp dirs in tests | Rust standard for FS test fixtures |
+| `vite` | ^6 | Dev server + bundler | Fast HMR, TS-native |
+| `typescript` | ~5.6 | Type checking | Project standard |
+
+## Test Strategy (current)
+
+| Layer | Tool | Tests |
+|-------|------|-------|
+| Domain logic | `cargo test` | 8 test modules, serde roundtrip + business logic |
+| Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
+| History | `cargo test` | 12 tests, in-memory SQLite |
+| Comparator | — | None yet |
+| Copy Engine | — | None yet |
+| Frontend | — | None yet |

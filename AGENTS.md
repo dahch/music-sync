@@ -32,3 +32,9 @@ Use codegraph for **structural** questions — what calls what, what would break
 
 The MCP server returns "not initialized." Ask the user: *"I notice this project doesn't have CodeGraph initialized. Want me to run `codegraph init -i` to build the index?"*
 <!-- CODEGRAPH_END -->
+
+## OpenCode Agents
+
+No custom agents are configured in `.opencode/agents/`. The project uses only
+the built-in opencode capabilities and the CodeGraph MCP server defined in
+[opencode.jsonc](./opencode.jsonc).
