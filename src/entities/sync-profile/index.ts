@@ -1,4 +1,6 @@
-export type ComparisonLevel = "Fast" | "Metadata" | "Strict";
+import type { ComparisonLevel } from "@/entities/music-file";
+
+export type { ComparisonLevel };
 
 export interface SyncProfile {
   id: string;
@@ -6,5 +8,5 @@ export interface SyncProfile {
   sourceRoot: string;
   destinationRoot: string;
   defaultComparisonLevel: ComparisonLevel;
-  lastSyncedAt: string | null;
+  lastSyncedAt: number | null;
 }

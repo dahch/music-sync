@@ -4,9 +4,9 @@ export interface MusicFile {
   relativePath: string;
   absolutePath: string;
   sizeBytes: number;
-  modifiedAt: string;
+  modifiedAt: number;
   extension: string;
-  contentHash: Blake3Hash | null;
+  contentHash: string | null;
 }
 
 export type DiffStatus = "New" | "Orphan" | "Identical" | "Different";
@@ -40,7 +40,7 @@ export interface ComparisonEntry {
 
 export interface ComparisonResult {
   entries: ComparisonEntry[];
-  scannedAt: string;
+  scannedAt: number;
   sourceRoot: string;
   destinationRoot: string;
   comparisonLevel: ComparisonLevel;
