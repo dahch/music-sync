@@ -14,22 +14,22 @@ src-tauri/
 ├── crates/
 │   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)   ✅
 │   ├── scanner/         # Filesystem scanner — tokio async I/O, progress, validation  ✅
-│   ├── comparator/      # Diff logic (ADR-002: 3-level comparison) — L1+L2 done, L3 pending  🚧
+│   ├── comparator/      # Diff logic (ADR-002: 3-level) — L1+L2 ✅, L3 pending        🚧
 │   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes) — scaffold   🔧
 │   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
-├── capabilities/        # Tauri v2 capability definitions (dialog plugin + core)
+├── capabilities/        # Tauri v2: core + dialog + core:event:default permissions
 ├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
-├── src/                 # Tauri entry point (main.rs + lib.rs) — greet command only   🔧
+├── src/                 # Tauri entry (main.rs + lib.rs) — commands::scan_and_compare  🚧
 ├── Cargo.toml           # Rust workspace root
 └── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 
 src/                     # Frontend (Feature-Sliced Design)
-├── app/                 # App entry (main.tsx + App.tsx), providers (empty)
-├── pages/               # home (counter scaffold)                                     🔧
-├── features/            # scanner, comparator, copy-engine, history — all empty stubs  🔧
-├── entities/            # TS types: music-file, sync-profile                          ✅
-└── shared/              # Zustand store (counter), api/lib/ui — all empty stubs        🔧
+├── app/                 # App entry (main.tsx → App.tsx → HomePage)
+├── pages/               # home: FolderSelection + ComparisonView                      🚧
+├── features/            # folder-selection ✅, comparison-view ✅, rest stubs          🚧
+├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile…   ✅
+└── shared/              # api (scanAndCompare ✅), store (counter), lib/ui stubs       🚧
 
 Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```
@@ -93,7 +93,11 @@ cargo build --manifest-path src-tauri/Cargo.toml
 ### Run tests
 
 ```bash
+# Rust (domain, scanner, comparator, history)
 cargo test --manifest-path src-tauri/Cargo.toml --workspace
+
+# Frontend (React components)
+pnpm test
 ```
 
 ### Scanner CLI debug binary

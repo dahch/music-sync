@@ -5,51 +5,54 @@
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (React/TS)                       │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  app/     entry (main.tsx → App.tsx)                  │  │
-│  │  pages/   home (counter scaffold)                     │  │
-│  │  entities/ music-file, sync-profile (TS types)        │  │
-│  │  features/ scanner, comparator, copy-engine, history   │  │  ← all stubs
-│  │  shared/  store (Zustand counter), api/lib/ui stubs   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  Package: music-sync (pnpm)  ·  Vite dev on :1420            │
-│  State: Zustand (counter only)  ·  API layer: @tauri-apps/api│
-└──────────────────────────┬──────────────────────────────────┘
-                           │ Tauri IPC (invoke / events)
-┌──────────────────────────┴──────────────────────────────────┐
-│                    Tauri Rust Backend                         │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  src-tauri/                                            │  │
-│  │  ├── src/lib.rs      Tauri builder + greet command     │  │
-│  │  ├── src/main.rs     Platform entry point              │  │
-│  │  ├── capabilities/   default.json (core + dialog)      │  │
-│  │  ├── migrations/     001_sync_tables.sql               │  │
-│  │  ├── tauri.conf.json App configuration                 │  │
-│  │  └── crates/         Workspace members (5 crates)      │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────┴──────────────────────────────────┐
-│                    Rust Crates (workspace)                    │
-│                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
-│  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│  │
-│  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │ (scaffold) │  │
-│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │            │  │
-│  │ serde    │  │ CLI bin  │  │          │  │            │  │
-│  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘  │
-│       │                                                     │
-│       └─────────────────┬───────────────────────────────────┘
-│                    ┌──────────┐                             │
-│                    │ history  │                             │
-│                    │ (rusqlite│                             │
-│                    │  bundled)│                             │
-│                    │ 12 tests │                             │
-│                    └──────────┘                             │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    Frontend (React/TS)                          │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  app/     entry (main.tsx → App.tsx → HomePage)          │  │
+│  │  pages/   home: FolderSelection + ComparisonView          │  │
+│  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
+│  │  features/ folder-selection ✅, comparison-view ✅,      │  │
+│  │           scanner/comparator/copy-engine/history — stubs  │  │
+│  │  shared/  api (scanAndCompare), store (counter),          │  │
+│  │           lib/ui — empty stubs                            │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  Package: music-sync (pnpm)  ·  Vite dev on :1420               │
+│  State: Zustand (counter)  ·  Tests: Vitest + jsdom + RTL      │
+└─────────────────────────────┬──────────────────────────────────┘
+                              │ Tauri IPC (invoke / events)
+┌─────────────────────────────┴──────────────────────────────────┐
+│                    Tauri Rust Backend                           │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  src-tauri/                                              │  │
+│  │  ├── src/lib.rs      Tauri builder + scan_and_compare    │  │
+│  │  ├── src/commands/   compare.rs (scan_and_compare cmd)   │  │
+│  │  ├── src/main.rs     Platform entry point                │  │
+│  │  ├── capabilities/   core + dialog + core:event:default  │  │
+│  │  ├── migrations/     001_sync_tables.sql                 │  │
+│  │  ├── tauri.conf.json App configuration                   │  │
+│  │  └── crates/         Workspace members (5 crates)        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────┬──────────────────────────────────┘
+                              │
+┌─────────────────────────────┴──────────────────────────────────┐
+│                    Rust Crates (workspace)                      │
+│                                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐    │
+│  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│    │
+│  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │ (scaffold) │    │
+│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │            │    │
+│  │ serde    │  │ CLI bin  │  │          │  │            │    │
+│  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘    │
+│       │                                                       │
+│       └─────────────────┬───────────────────────────────────  │
+│                    ┌──────────┐       ┌─────────────────┐    │
+│                    │ history  │       │ Tauri commands  │    │
+│                    │ (rusqlite│       │ (compare.rs)    │    │
+│                    │  bundled)│       │ scan_and_compare│    │
+│                    │ 12 tests │       │ 7 tests         │    │
+│                    └──────────┘       └─────────────────┘    │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ## Layer Breakdown
@@ -150,29 +153,67 @@ preservation.
 
 **Current state:**
 - Registers `tauri-plugin-dialog` for native file dialogs.
-- Exposes one command (`greet`) — placeholder for future real commands.
-- Window title set at runtime: "MusicSync — scaffolding OK".
-- Capability `default.json` grants `core:default` + `dialog:default`.
+- Exposes one command (`scan_and_compare`) in a `commands` module:
+  - Accepts `source_path`, `dest_path`, `level` string.
+  - Validates both paths, runs concurrent `scan_pair()` with progress events
+    (`scan:progress`), then compares and returns `ComparisonResult`.
+  - `parse_comparison_level()` helper tested separately (7 tests).
+- Window title set at runtime: "MusicSync".
+- Capability `default.json` grants `core:default`, `dialog:default`,
+  `core:event:default` (needed for frontend progress event subscription).
 
 ### 7. Frontend (`src/`)
 
 **Purpose:** React UI following Feature-Sliced Design.
 
 **Current state:**
-- **Entities layer only:** TypeScript interfaces mirror all domain types.
+- **Entities layer:** TypeScript interfaces mirror all domain types.
   Notable: `CopyStatus` uses a tagged union (`{ Failed: string } | "Pending" | ...`
   to match Rust's `enum` with data in serde JSON.
+- **API layer:** `src/shared/api/index.ts` provides:
+  - `scanAndCompare(sourcePath, destPath, level)` — wraps `invoke("scan_and_compare", ...)`.
+  - `onScanProgress(callback)` — subscribes to `scan:progress` Tauri events.
+- **Features:** `folder-selection` (native folder picker + comparison level selector,
+  12 tests) and `comparison-view` (summary stat cards + entry table, 30 tests)
+  are implemented. Other features (`scanner`, `comparator`, `copy-engine`,
+  `history`) are empty barrels.
+- **Page:** `HomePage` orchestrates the scan→compare flow: idle → scanning (progress display) → done (comparison view) → error.
 - **Store:** Zustand `useAppStore` with a counter — proof of concept.
-- **Everything else:** Empty barrel files (`export {};`).
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
+- **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
+  `@testing-library/jest-dom`.
 
 ## Data Flows
 
-### Scan Flow (implemented)
+### Integrated Scan+Compare Flow (implemented — Tauri command `scan_and_compare`)
 
 ```
-User triggers scan (future Tauri command)
+Frontend: scanAndCompare(sourcePath, destPath, level)
+    ↓ Tauri invoke
+commands::scan_and_compare()
     ↓
+parse_comparison_level(level)       ← validates "Fast"|"Metadata"|"Strict"
+    ↓
+Scanner::validate() (both paths)    ← checks paths exist + are readable dirs
+    ↓
+scan_pair(source, dest)             ← tokio::try_join! two async walks
+    ↓ (for each file, from both scans)
+progress_tx.send(ScanProgress)
+    ↓ (relayed by background task)
+app.emit("scan:progress") → frontend listen("scan:progress")
+    ↓
+(Vec<MusicFile> source, Vec<MusicFile> dest) ← collected from both sides
+    ↓
+Comparator::compare()               ← HashMap index + cascading L1→L2
+    ↓
+ComparisonResult (entries + auto-computed stats)
+    ↓ Tauri return
+Frontend receives ComparisonResult → ComparisonView renders
+```
+
+### Scan Flow (library-level)
+
+```
 Scanner::validate()    ← checks path exists + is readable dir
     ↓
 Scanner::scan()        ← async recursive walk with tokio::fs
@@ -182,7 +223,7 @@ progress_tx.send(ScanProgress)
 Vec<MusicFile>         ← collected results
 ```
 
-### Comparison Flow (implemented: L1+L2, L3 pending)
+### Comparison Flow (library-level: L1+L2, L3 pending)
 
 ```
 Vec<MusicFile>(source) + Vec<MusicFile>(destination)
@@ -199,24 +240,29 @@ Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 | Dependency | Version | Purpose | Why this one |
 |---|---|---|---|
 | `tauri` | 2 | App framework | ADR-001 |
-| `tauri-plugin-dialog` | 2 | Native file dialogs | OS-native picker |
+| `tauri-plugin-dialog` | 2 | Native file dialogs (Rust + npm) | OS-native picker |
 | `serde` / `serde_json` | 1 | Serialization | Tauri IPC requires serde |
 | `tokio` | 1 | Async runtime | Scanner I/O concurrency |
 | `rusqlite` | 0.31 | SQLite | Embedded DB (bundled) |
 | `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
 | `zustand` | ^5 | State management | ADR-005 |
 | `@tauri-apps/api` | ^2 | Tauri IPC bindings | Required by Tauri |
-| `tempfile` | 3 (dev) | Temp dirs in tests | Rust standard for FS test fixtures |
+| `@tauri-apps/plugin-dialog` | ^2 (npm) | Frontend folder picker | Pair with Rust `tauri-plugin-dialog` |
+| `tempfile` | 3 (dev) | Temp dirs in Rust tests | Rust standard for FS test fixtures |
 | `vite` | ^6 | Dev server + bundler | Fast HMR, TS-native |
+| `vitest` | ^4 | Frontend test runner | Vite-native, same config as build |
+| `@testing-library/react` | ^16 | React component tests | Standard for RTL |
+| `jsdom` | ^29 | DOM environment for tests | Vitest requires a DOM impl |
 | `typescript` | ~5.6 | Type checking | Project standard |
 
 ## Test Strategy (current)
 
 | Layer | Tool | Tests |
 |-------|------|-------|
-| Domain logic | `cargo test` | 9 test modules, serde roundtrip + business logic |
+| Domain logic | `cargo test` | 9 modules / 35 tests — serde roundtrip + business logic |
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 12 tests, in-memory SQLite |
+| Tauri commands | `cargo test` | 7 tests — `parse_comparison_level` validation |
 | Copy Engine | — | None yet |
-| Frontend | — | None yet |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 30 (ComparisonView) |

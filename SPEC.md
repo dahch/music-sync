@@ -87,33 +87,49 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 
 ### 5. Frontend (`src/`)
 
-**Status: 🔧 Scaffold**
+**Status: 🚧 Partial — scan→compare pipeline works, no copy UI yet**
 
 - React 18 + TypeScript + Vite dev server (port 1420, HMR on 1421).
 - Feature-Sliced Design directory structure: `app/`, `pages/`, `features/`,
   `entities/`, `shared/`.
+- **Page:** `HomePage` orchestrates the full scan→compare flow: folder selection,
+  progress display, comparison results table.
+- **Features:**
+  - `folder-selection` — source/dest folder picker (via `tauri-plugin-dialog`
+    native dialogs) with comparison level selector (`Fast`, `Metadata`, `Strict`). 12 tests.
+  - `comparison-view` — summary stat cards + table of entries with color-coded
+    status (New/Orphan/Identical/Different). 30 tests.
+  - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs.
 - **Entities:** TypeScript interfaces mirroring all Rust domain types
   (`MusicFile`, `DiffStatus`, `ComparisonLevel`, `CopyStatus`, `ComparisonStats`,
   `ComparisonEntry`, `ComparisonResult`, `CopyTask`, `SyncProfile`).
+- **API layer:** `src/shared/api/index.ts` provides:
+  - `scanAndCompare(sourcePath, destPath, level)` — invokes Tauri `scan_and_compare`.
+  - `onScanProgress(callback)` — subscribes to `scan:progress` events.
 - **Store:** Zustand store with counter example (`count`, `increment`).
-- **UI:** Home page with counter display and button.
-- `shared/api/`, `shared/lib/`, `shared/ui/`, `app/providers/` — all empty stubs.
+- **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
 ### 6. Tauri Integration (`src-tauri/src/`)
 
-**Status: 🔧 Scaffold**
+**Status: 🚧 Partial — scan→compare wired, no copy or history commands yet**
 
 - Tauri v2 app with dialog plugin registered.
-- One command (`greet`) returning a scaffold message.
-- Single window (1200×800, resizable), title "MusicSync — scaffolding OK".
-- Capabilities: `core:default`, `dialog:default`.
+- One real command (`scan_and_compare`):
+  - Accepts `source_path`, `dest_path`, `level` string arguments.
+  - Validates both paths, spawns concurrent source/dest scan via
+    `tokio::try_join!`, streams `scan:progress` events to the frontend,
+    then runs the comparator and returns `ComparisonResult`.
+  - Helper `parse_comparison_level()` tested directly (7 unit tests).
+- Single window (1200×800, resizable), title "MusicSync".
+- Capabilities: `core:default`, `dialog:default`, `core:event:default`.
 - Bundle targets: all (macOS .dmg, Windows .msi, Linux .AppImage).
 
 ## Non-Functional Characteristics (current)
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 15 (scanner) + 30 (comparator) + 12 (history) + 34 (domain) = passes |
+| Rust test suite | 15 (scanner) + 30 (comparator) + 12 (history) + 35 (domain) + 7 (commands) = passes |
+| Frontend tests | 12 (FolderSelection) + 30 (ComparisonView) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |
