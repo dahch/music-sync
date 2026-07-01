@@ -1,0 +1,8 @@
+[package]
+name = "music-sync-comparator"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+music-sync-domain = { path = "../domain" }
+serde = { version = "1", features = ["derive"] }
