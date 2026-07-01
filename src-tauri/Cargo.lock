@@ -1825,6 +1825,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tokio",
 ]
 
 [[package]]
@@ -1865,6 +1866,7 @@ name = "music-sync-scanner"
 version = "0.1.0"
 dependencies = [
  "music-sync-domain",
+ "serde",
  "tempfile",
  "tokio",
 ]

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 music-sync-domain = { path = "../domain" }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["fs", "sync", "macros", "rt-multi-thread"] }
 
 [dev-dependencies]
