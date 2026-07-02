@@ -33,5 +33,8 @@ logs/
 src-tauri/dev/
 src-tauri/gen/
 
-#Opencode Skills
-.opencode/skills/
+#Agents Skills
+.agents/skills/
+.claude/skills/
+.continue/skills/
+skills-lock.json
