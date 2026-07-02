@@ -118,11 +118,12 @@ pub enum CopyStatus {
     Done,
     Failed(String),
     Skipped,
+    Cancelled,
 }
 
 impl CopyStatus {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Done | Self::Failed(_) | Self::Skipped)
+        matches!(self, Self::Done | Self::Failed(_) | Self::Skipped | Self::Cancelled)
     }
 }
 
@@ -404,6 +405,7 @@ mod tests {
             assert!(CopyStatus::Done.is_terminal());
             assert!(CopyStatus::Failed("err".into()).is_terminal());
             assert!(CopyStatus::Skipped.is_terminal());
+            assert!(CopyStatus::Cancelled.is_terminal());
         }
 
         #[test]
@@ -421,6 +423,7 @@ mod tests {
                 CopyStatus::Verifying,
                 CopyStatus::Done,
                 CopyStatus::Skipped,
+                CopyStatus::Cancelled,
             ] {
                 let json = serde_json::to_string(variant).unwrap();
                 let back: CopyStatus = serde_json::from_str(&json).unwrap();
@@ -437,7 +440,7 @@ mod tests {
         }
 
         #[test]
-        fn is_terminal_all_six_variants() {
+        fn is_terminal_all_variants() {
             let cases: Vec<(CopyStatus, bool)> = vec![
                 (CopyStatus::Pending, false),
                 (CopyStatus::InProgress, false),
@@ -445,6 +448,7 @@ mod tests {
                 (CopyStatus::Done, true),
                 (CopyStatus::Failed("".into()), true),
                 (CopyStatus::Skipped, true),
+                (CopyStatus::Cancelled, true),
             ];
             for (status, expected) in cases {
                 assert_eq!(
