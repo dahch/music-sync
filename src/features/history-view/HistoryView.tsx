@@ -13,9 +13,9 @@ export function formatSize(bytes: number): string {
 const PAGE_SIZE = 20;
 
 const statusColor = (status: string): string => {
-  if (status === "Completed") return "#22c55e";
-  if (status === "Failed") return "#ef4444";
-  return "#f59e0b";
+  if (status === "Completed") return "var(--color-accent)";
+  if (status === "Failed") return "var(--color-danger)";
+  return "var(--color-warning)";
 };
 
 export function HistoryView() {
@@ -44,14 +44,14 @@ export function HistoryView() {
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   return (
-    <div className="mt-6 p-4 border border-zinc-700 rounded-lg bg-zinc-900/50">
-      <h3 className="text-base font-semibold mb-3 text-zinc-100">Sync History</h3>
+    <div className="mt-6 p-4 border border-border-subtle rounded-xl bg-surface-1">
+      <h3 className="text-base font-semibold mb-3 text-text-primary">Sync History</h3>
 
-      {loading && <p className="text-zinc-500 text-[13px]">Loading…</p>}
-      {error && <p className="text-red-400 text-[13px]">Error: {error}</p>}
+      {loading && <p className="text-text-muted text-[13px]">Loading...</p>}
+      {error && <p className="text-danger text-[13px]">Error: {error}</p>}
 
       {data && data.entries.length === 0 && !loading && (
-        <p className="text-zinc-500 text-[13px]">No sync history yet.</p>
+        <p className="text-text-muted text-[13px]">No sync history yet.</p>
       )}
 
       {data && data.entries.length > 0 && (
@@ -59,38 +59,38 @@ export function HistoryView() {
           <div className="overflow-x-auto text-[13px]">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="border-b-2 border-zinc-700 text-left">
-                  <th className="py-1.5 px-2 text-zinc-400 text-xs font-medium">Date</th>
-                  <th className="py-1.5 px-2 text-zinc-400 text-xs font-medium">Source</th>
-                  <th className="py-1.5 px-2 text-zinc-400 text-xs font-medium">Destination</th>
-                  <th className="py-1.5 px-2 text-right text-zinc-400 text-xs font-medium">Files</th>
-                  <th className="py-1.5 px-2 text-right text-zinc-400 text-xs font-medium">Size</th>
-                  <th className="py-1.5 px-2 text-right text-zinc-400 text-xs font-medium">Failed</th>
-                  <th className="py-1.5 px-2 text-zinc-400 text-xs font-medium">Status</th>
+                <tr className="border-b-2 border-border text-left">
+                  <th className="py-2 px-3 text-text-muted text-xs font-medium uppercase tracking-wide">Date</th>
+                  <th className="py-2 px-3 text-text-muted text-xs font-medium uppercase tracking-wide">Source</th>
+                  <th className="py-2 px-3 text-text-muted text-xs font-medium uppercase tracking-wide">Destination</th>
+                  <th className="py-2 px-3 text-right text-text-muted text-xs font-medium uppercase tracking-wide">Files</th>
+                  <th className="py-2 px-3 text-right text-text-muted text-xs font-medium uppercase tracking-wide">Size</th>
+                  <th className="py-2 px-3 text-right text-text-muted text-xs font-medium uppercase tracking-wide">Failed</th>
+                  <th className="py-2 px-3 text-text-muted text-xs font-medium uppercase tracking-wide">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {data.entries.map((e: SyncHistoryEntry) => (
-                  <tr key={e.id} className="border-b border-zinc-800">
-                    <td className="py-1.5 px-2 whitespace-nowrap text-xs text-zinc-400">
+                  <tr key={e.id} className="border-b border-border-subtle hover:bg-surface-0 transition-colors">
+                    <td className="py-2 px-3 whitespace-nowrap text-xs text-text-secondary">
                       {new Date(e.startedAt).toLocaleString()}
                     </td>
-                    <td className="py-1.5 px-2 font-mono text-[11px] max-w-40 overflow-hidden text-ellipsis text-zinc-500">
+                    <td className="py-2 px-3 font-mono text-[11px] max-w-40 overflow-hidden text-ellipsis text-text-muted">
                       {e.sourceRoot}
                     </td>
-                    <td className="py-1.5 px-2 font-mono text-[11px] max-w-40 overflow-hidden text-ellipsis text-zinc-500">
+                    <td className="py-2 px-3 font-mono text-[11px] max-w-40 overflow-hidden text-ellipsis text-text-muted">
                       {e.destinationRoot}
                     </td>
-                    <td className="py-1.5 px-2 text-right text-zinc-300">
+                    <td className="py-2 px-3 text-right text-text-primary tabular-nums">
                       {e.filesNew + e.filesUpdated}
                     </td>
-                    <td className="py-1.5 px-2 text-right text-zinc-300">
+                    <td className="py-2 px-3 text-right text-text-primary tabular-nums">
                       {formatSize(e.bytesCopied)}
                     </td>
-                    <td className="py-1.5 px-2 text-right text-zinc-300" style={{ color: e.filesFailed > 0 ? "#ef4444" : undefined }}>
+                    <td className="py-2 px-3 text-right tabular-nums" style={{ color: e.filesFailed > 0 ? "var(--color-danger)" : "var(--color-text-primary)" }}>
                       {e.filesFailed > 0 ? e.filesFailed : "\u2014"}
                     </td>
-                    <td className="py-1.5 px-2">
+                    <td className="py-2 px-3">
                       <span
                         style={{ color: statusColor(e.status) }}
                         className="font-semibold text-[11px]"
@@ -108,17 +108,17 @@ export function HistoryView() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="px-2.5 py-1 text-xs border border-zinc-600 rounded-md bg-transparent text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-default"
+              className="px-2.5 py-1 text-xs font-medium border border-border rounded-lg bg-transparent text-text-secondary cursor-pointer transition-colors hover:bg-surface-2 disabled:opacity-30 disabled:cursor-default"
             >
               Previous
             </button>
-            <span className="text-xs text-zinc-500">
+            <span className="text-xs text-text-muted">
               Page {page} of {totalPages}
             </span>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="px-2.5 py-1 text-xs border border-zinc-600 rounded-md bg-transparent text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-default"
+              className="px-2.5 py-1 text-xs font-medium border border-border rounded-lg bg-transparent text-text-secondary cursor-pointer transition-colors hover:bg-surface-2 disabled:opacity-30 disabled:cursor-default"
             >
               Next
             </button>

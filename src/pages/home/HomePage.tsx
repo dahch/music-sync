@@ -88,17 +88,17 @@ export function HomePage() {
   }, [result, sourceRoot, destRoot, selectedPaths, startCopy, storeOnCopyProgress, verifyCopy]);
 
   return (
-    <div className="p-8 font-sans max-w-4xl mx-auto">
-      <div className="flex justify-between items-start mb-6">
+    <div className="w-full px-6 py-5">
+      <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight mb-1">MusicSync</h1>
-          <p className="text-zinc-400 text-sm">
+          <h1 className="text-lg font-semibold tracking-tight text-text-primary">Compare & sync</h1>
+          <p className="text-text-secondary text-sm mt-0.5">
             Compare and sync audio libraries between your local collection and a portable device.
           </p>
         </div>
         <button
           onClick={() => setShowHistory((s) => !s)}
-          className="px-3 py-1.5 text-xs border border-zinc-700 rounded-md bg-transparent text-zinc-300 hover:bg-zinc-800 cursor-pointer transition-colors"
+          className="px-3 py-1.5 text-xs font-medium border border-border rounded-lg bg-surface-1 text-text-secondary hover:bg-surface-2 cursor-pointer transition-colors"
         >
           {showHistory ? "Close history" : "Sync history"}
         </button>
@@ -109,13 +109,16 @@ export function HomePage() {
       {showHistory && <HistoryView />}
 
       {phase === "scanning" && (
-        <div className="my-4 p-4 bg-zinc-900 rounded-lg border border-zinc-800">
-          <p className="font-semibold">Scanning…</p>
+        <div className="mt-4 p-4 bg-surface-1 rounded-xl border border-border-subtle">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+            <p className="text-sm font-medium">Scanning...</p>
+          </div>
           {progress && (
-            <p className="text-sm text-zinc-400 mt-1">
+            <p className="text-sm text-text-secondary mt-2">
               {progress.filesFound} files found
               {progress.currentPath && (
-                <span className="font-mono text-xs block mt-1 break-all text-zinc-500">
+                <span className="font-mono text-xs block mt-1 break-all text-text-muted">
                   {progress.currentPath}
                 </span>
               )}
@@ -125,16 +128,16 @@ export function HomePage() {
       )}
 
       {phase === "error" && (
-        <div className="my-4 p-4 bg-red-950/40 rounded-lg border border-red-800 text-red-300">
-          <p className="font-semibold">Error</p>
-          <p className="text-sm mt-1">{error}</p>
+        <div className="mt-4 p-4 bg-danger-soft rounded-xl border border-danger/20">
+          <p className="text-sm font-medium text-danger">Error</p>
+          <p className="text-sm text-danger/80 mt-1">{error}</p>
         </div>
       )}
 
       {(copyRunning || copyDone || copyError) && (
         <>
           {unmountMsg && (
-            <div className="my-4 px-4 py-3 bg-amber-950/30 border border-amber-700/50 rounded-lg text-amber-300 text-sm">
+            <div className="mt-4 px-4 py-3 bg-warning-soft rounded-xl border border-warning/20 text-warning text-sm">
               {unmountMsg}
             </div>
           )}
@@ -149,20 +152,20 @@ export function HomePage() {
             <button
               onClick={handleCopy}
               disabled={selectedPaths.length === 0}
-              className={`px-5 py-2 text-sm font-semibold rounded-md text-white cursor-pointer transition-colors ${
+              className={`px-5 py-2 text-sm font-medium rounded-lg cursor-pointer transition-colors ${
                 selectedPaths.length === 0
-                  ? "bg-zinc-700 cursor-default"
-                  : "bg-emerald-600 hover:bg-emerald-500"
+                  ? "bg-surface-3 text-text-muted cursor-default"
+                  : "bg-accent text-white hover:bg-accent-hover"
               }`}
             >
               Copy selected ({selectedPaths.length} file{selectedPaths.length !== 1 ? "s" : ""})
             </button>
-            <label className="text-xs flex items-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-300">
+            <label className="text-xs flex items-center gap-1.5 cursor-pointer text-text-secondary hover:text-text-primary">
               <input
                 type="checkbox"
                 checked={verifyCopy}
                 onChange={(e) => setVerifyCopy(e.target.checked)}
-                className="size-3.5 rounded border-zinc-600 bg-zinc-800 accent-emerald-600"
+                className="size-3.5 rounded border-border bg-surface-1 accent-accent"
               />
               Verify with checksum (BLAKE3)
             </label>
