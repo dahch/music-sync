@@ -142,6 +142,17 @@ pub async fn scan_pair(
     destination: Scanner,
     progress_tx: UnboundedSender<ScanProgress>,
 ) -> Result<(Vec<MusicFile>, Vec<MusicFile>), ScanError> {
+    // Verify destination volume is still mounted before scanning
+    if !music_sync_domain::mount::is_path_mounted(destination.root()) {
+        return Err(ScanError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            format!(
+                "destination volume is not accessible: {}",
+                destination.root().display()
+            ),
+        )));
+    }
+
     let src = source.scan(progress_tx.clone());
     let dst = destination.scan(progress_tx);
     tokio::try_join!(src, dst)
@@ -377,6 +388,231 @@ mod tests {
         let (files, _) = collect(scanner).await.unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].relative_path, PathBuf::from("a/b/song.flac"));
+    }
+
+    #[tokio::test]
+    async fn scan_pair_rejects_unmounted_destination() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+        let dst_path = dst_dir.path().to_path_buf();
+        drop(dst_dir); // "unmount" destination before scanning
+
+        let source = Scanner::new(src_dir.path().to_path_buf(), vec!["flac".into()]);
+        let destination = Scanner::new(dst_path, vec!["flac".into()]);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let err = scan_pair(source, destination, tx).await.unwrap_err();
+        assert!(
+            matches!(err, ScanError::IoError(ref e) if e.kind() == std::io::ErrorKind::NotConnected),
+            "expected NotConnected error, got {err}"
+        );
+        assert!(err.to_string().contains("not accessible"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scan_skips_symlinked_directories() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let real_sub = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir_all(&real_sub).unwrap();
+        std::fs::write(real_sub.join("song.flac"), b"data").unwrap();
+        symlink(&real_sub, &link).unwrap();
+
+        // Also create a file at root level to confirm scan still works
+        std::fs::write(dir.path().join("root.flac"), b"root").unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec!["flac".into()]);
+        let (files, _) = collect(scanner).await.unwrap();
+
+        // root.flac found, song.flac inside real_sub found, link not traversed
+        let names: Vec<_> = files.iter().map(|f| f.relative_path.as_os_str().to_os_string()).collect();
+        assert!(names.contains(&std::ffi::OsString::from("root.flac")), "should find root file");
+        assert!(names.contains(&std::ffi::OsString::from("real/song.flac")), "should find file in real subdir");
+        assert_eq!(files.len(), 2, "symlinked dir should not be traversed");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scan_returns_permission_denied_on_unreadable_subdirectory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let restricted = dir.path().join("restricted");
+        std::fs::create_dir_all(&restricted).unwrap();
+        std::fs::write(restricted.join("secret.flac"), b"shh").unwrap();
+        // Also a readable file at root
+        std::fs::write(dir.path().join("open.flac"), b"open").unwrap();
+
+        // Make the subdirectory unreadable
+        std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec!["flac".into()]);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let err = scanner.scan(tx).await.unwrap_err();
+
+        // Verify the error is PermissionDenied
+        assert!(
+            matches!(&err, ScanError::PermissionDenied(p) if p.ends_with("restricted")),
+            "expected PermissionDenied for restricted subdirectory, got {err}"
+        );
+
+        // Restore permissions so TempDir can clean up
+        let _ = std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // -----------------------------------------------------------------------
+    // path_aware_error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn path_aware_error_maps_not_found() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let path = Path::new("/missing/file.flac");
+        let err = path_aware_error(io_err, path);
+        assert!(matches!(err, ScanError::NotFound(p) if p == PathBuf::from("/missing/file.flac")));
+    }
+
+    #[test]
+    fn path_aware_error_maps_permission_denied() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let path = Path::new("/restricted");
+        let err = path_aware_error(io_err, path);
+        assert!(matches!(err, ScanError::PermissionDenied(p) if p == PathBuf::from("/restricted")));
+    }
+
+    #[test]
+    fn path_aware_error_maps_other_to_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "weird");
+        let path = Path::new("/some/path");
+        let err = path_aware_error(io_err, path);
+        assert!(matches!(err, ScanError::IoError(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // ScanError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_error_display_not_found() {
+        let err = ScanError::NotFound(PathBuf::from("/no/such/path"));
+        assert_eq!(err.to_string(), "path not found: /no/such/path");
+    }
+
+    #[test]
+    fn scan_error_display_not_a_directory() {
+        let err = ScanError::NotADirectory(PathBuf::from("/tmp/file.txt"));
+        assert_eq!(err.to_string(), "path is not a directory: /tmp/file.txt");
+    }
+
+    #[test]
+    fn scan_error_display_permission_denied() {
+        let err = ScanError::PermissionDenied(PathBuf::from("/etc/shadow"));
+        assert_eq!(err.to_string(), "permission denied: /etc/shadow");
+    }
+
+    #[test]
+    fn scan_error_display_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "disk error");
+        let err = ScanError::IoError(io_err);
+        assert_eq!(err.to_string(), "I/O error: disk error");
+    }
+
+    // -----------------------------------------------------------------------
+    // std::error::Error impl
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_error_implements_std_error() {
+        // Compile-time check: all variants must satisfy the Error trait bound
+        fn assert_error<T: std::error::Error>() {}
+        assert_error::<ScanError>();
+    }
+
+    // -----------------------------------------------------------------------
+    // DEFAULT_EXTENSIONS
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_extensions_are_mp3_and_flac() {
+        assert_eq!(DEFAULT_EXTENSIONS, &["mp3", "flac"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scanner::root
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scanner_root_returns_configured_path() {
+        let scanner = Scanner::new(PathBuf::from("/music/library"), vec!["flac".into()]);
+        assert_eq!(scanner.root(), Path::new("/music/library"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Files without extensions
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn scan_skips_files_without_extension_when_extensions_specified() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("README"), b"no ext").unwrap();
+        std::fs::write(dir.path().join("song.flac"), b"has ext").unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec!["flac".into()]);
+        let (files, _) = collect(scanner).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].extension, "flac");
+    }
+
+    #[tokio::test]
+    async fn scan_skips_files_without_extension_even_when_extensions_empty() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("README"), b"no ext").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), b"text").unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec![]);
+        let (files, _) = collect(scanner).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].extension, "txt");
+    }
+
+    // -----------------------------------------------------------------------
+    // File with multiple dots
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn scan_matches_extension_on_file_with_multiple_dots() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("song.tar.gz"), b"compressed").unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec!["gz".into()]);
+        let (files, _) = collect(scanner).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].extension, "gz");
+        assert_eq!(files[0].relative_path, PathBuf::from("song.tar.gz"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Symlink to a regular file (not directory)
+    // -----------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scan_follows_symlink_to_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("actual.flac");
+        let link = dir.path().join("link.flac");
+        std::fs::write(&target, b"real file").unwrap();
+        symlink(&target, &link).unwrap();
+
+        let scanner = Scanner::new(dir.path().to_path_buf(), vec!["flac".into()]);
+        let (files, _) = collect(scanner).await.unwrap();
+        // Symlink to a file is detected as a file (is_file() returns true for symlink files)
+        assert_eq!(files.len(), 1, "symlink to file should be included");
     }
 
     // ponytail: uses local SSD for fixture, slow on network/CI dirs
