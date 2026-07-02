@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ComparisonResult } from "@/entities/music-file";
+import type { ComparisonResult, SyncHistoryEntry, HistoryPage } from "@/entities/music-file";
 
-export type { ComparisonResult } from "@/entities/music-file";
+export type { ComparisonResult, SyncHistoryEntry, HistoryPage } from "@/entities/music-file";
 
 export interface ScanProgress {
   filesFound: number;
@@ -42,4 +42,17 @@ export async function calculateSizeAndSpace(
     destinationRoot,
     selectedPaths,
   });
+}
+
+export async function saveHistoryEntry(
+  entry: SyncHistoryEntry,
+): Promise<void> {
+  return invoke("save_history_entry", { entry });
+}
+
+export async function listHistory(
+  page: number,
+  pageSize: number,
+): Promise<HistoryPage> {
+  return invoke("list_history", { page, pageSize });
 }

@@ -53,3 +53,28 @@ export interface CopyTask {
   bytesCopied: number;
   retries: number;
 }
+
+export interface SyncHistoryEntry {
+  id: string;
+  profileId: string | null;
+  sourceRoot: string;
+  destinationRoot: string;
+  comparisonLevel: ComparisonLevel;
+  filesNew: number;
+  filesUpdated: number;
+  filesSkipped: number;
+  filesFailed: number;
+  bytesCopied: number;
+  totalBytes: number;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  errorMessage: string | null;
+}
+
+export interface HistoryPage {
+  entries: SyncHistoryEntry[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
