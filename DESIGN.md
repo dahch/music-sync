@@ -9,12 +9,16 @@
 │                    Frontend (React/TS)                          │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  app/     entry (main.tsx → App.tsx → HomePage)          │  │
-│  │  pages/   home: FolderSelection + ComparisonView          │  │
+│  │  pages/   home: FolderSelection + ComparisonView +        │  │
+│  │           CopyProgressView + HistoryView                   │  │
 │  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
 │  │  features/ folder-selection ✅, comparison-view ✅,      │  │
+│  │           copy-progress ✅, history-view ✅,             │  │
 │  │           scanner/comparator/copy-engine/history — stubs  │  │
 │  │  shared/  api (scanAndCompare, calculateSizeAndSpace,    │  │
-│  │           store (selection + space check), lib/ui — stubs  │  │
+│  │           saveHistoryEntry, listHistory, copyFiles,      │  │
+│  │           onCopyProgress ✅), store (selection + space   │  │
+│  │           check + copy state), lib/ui — stubs             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  Package: music-sync (pnpm)  ·  Vite dev on :1420               │
@@ -126,7 +130,8 @@ streaming.
   a sync entry after completion or failure.
 - `insert_profile(profile)` — persist a `SyncProfile`.
 - Exposed via Tauri commands `save_history_entry` and `list_history`.
-- **Not implemented:** frontend UI component for history view.
+- Frontend `HistoryView` component renders paginated table with source/dest paths,
+  file count, size, status, and failed count.
 
 **Test coverage:** 22 tests covering inserts, pagination (first/last/empty/zero
 page), status updates, profile linkage, duplicate/error path handling,
@@ -242,16 +247,24 @@ display formatting.
   - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — wraps `invoke("calculate_size_and_space", ...)`.
   - `saveHistoryEntry(entry)` — wraps `invoke("save_history_entry", ...)`.
   - `listHistory(page, pageSize)` — wraps `invoke("list_history", ...)`.
-  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, and `HistoryPage` TS interfaces.
+  - `copyFiles(sourceRoot, destinationRoot, items)` — wraps `invoke("copy_files", ...)`.
+  - `onCopyProgress(callback)` — subscribes to `copy:progress` Tauri events.
+  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
+    `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
 - **Features:** `folder-selection` (native folder picker + comparison level selector,
   12 tests) and `comparison-view` (summary stat cards + entry table with selection +
-  space check panel, 57 tests) are implemented. Other features (`scanner`, `comparator`,
-  `copy-engine`, `history`) are empty barrel stubs (history backend CRUD is complete,
-  but no frontend UI component yet).
-- **Page:** `HomePage` orchestrates the scan→compare flow: idle → scanning (progress display) → done (comparison view) → error.
+  space check panel, 57 tests) are implemented. `copy-progress` (progress bar,
+  file list, error display, 31 tests) and `history-view` (paginated sync history
+  table, 21 tests) are also implemented. Remaining stubs: `scanner`, `comparator`,
+  `copy-engine`, `history` (empty barrel exports).
+- **Page:** `HomePage` orchestrates the full pipeline: folder selection → scan with
+  progress → comparison results → copy with progress → history save. Also toggles
+  `HistoryView` panel showing past sync runs.
 - **Store:** Zustand `useAppStore` with real state: `selectedPaths` (string[]),
-  `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, and `fetchSpaceInfo`
-  (calls `calculate_size_and_space`). No counter.
+  `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, `fetchSpaceInfo`
+  (calls `calculate_size_and_space`), plus copy state (`copyProgress`,
+  `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`,
+  `onCopyProgress`, `resetCopy`). No counter.
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
 - **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
   `@testing-library/jest-dom`.
@@ -363,4 +376,4 @@ Frontend receives results
 | History | `cargo test` | 22 tests, in-memory SQLite — insert, paginate, status update, edge cases |
 | Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`). Copy and history commands exercised via crate tests |
 | Copy Engine | `cargo test` (tokio) | 17 tests — streaming copy, error handling, chunk edge cases, serialization |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 11 (store) |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 31 (CopyProgressView) + 21 (HistoryView) + 11 (store) |

@@ -69,7 +69,7 @@ case-insensitive extensions, 20k-file benchmark, concurrency (`scan_pair`).
   - `update_entry_status()` — update sync status after completion/failure.
   - `insert_profile()` — persist a `SyncProfile`.
 - Exposed via Tauri commands `save_history_entry` and `list_history`.
-- Frontend barrel stub still empty (no history UI component yet).
+- Frontend `HistoryView` component renders table with pagination.
 
 **Test coverage:** 22 tests covering inserts, pagination (first/last/empty pages),
 status updates, profile linkage, error cases, idempotency, u64 boundary values.
@@ -119,21 +119,25 @@ error display formatting, and serialization roundtrip.
 
 ### 5. Frontend (`src/`)
 
-**Status: 🚧 Partial — scan→compare pipeline works, no copy UI yet**
+**Status: 🚧 Partial — scan→compare→copy→history pipeline works, no scanner/comparator/copy-engine/history feature stubs yet**
 
 - React 18 + TypeScript + Vite dev server (port 1420, HMR on 1421).
 - Feature-Sliced Design directory structure: `app/`, `pages/`, `features/`,
   `entities/`, `shared/`.
-- **Page:** `HomePage` orchestrates the full scan→compare flow: folder selection,
-  progress display, comparison results table.
+- **Page:** `HomePage` orchestrates the full pipeline: folder selection → scan with
+  progress display → comparison results → copy with progress → history save. Also
+  toggles `HistoryView` panel showing past sync runs.
 - **Features:**
   - `folder-selection` — source/dest folder picker (via `tauri-plugin-dialog`
     native dialogs) with comparison level selector (`Fast`, `Metadata`, `Strict`). 12 tests.
   - `comparison-view` — summary stat cards + table of entries with color-coded
     status (New/Orphan/Identical/Different) + selection panel with space
     check. 57 tests.
-  - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs
-    (history backend CRUD is complete, but no frontend UI component yet).
+  - `copy-progress` — `CopyProgressView` component with progress bar, file list, error
+    display, and "Back to comparison" button. 31 tests.
+  - `history-view` — `HistoryView` component with paginated sync history table
+    (source/dest paths, file count, size, status, failed count). 21 tests.
+  - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs.
 - **Entities:** TypeScript interfaces mirroring all Rust domain types
   (`MusicFile`, `DiffStatus`, `ComparisonLevel`, `CopyStatus`, `ComparisonStats`,
   `ComparisonEntry`, `ComparisonResult`, `CopyTask`, `SyncProfile`,
@@ -144,13 +148,16 @@ error display formatting, and serialization roundtrip.
   - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — invokes Tauri `calculate_size_and_space`.
   - `saveHistoryEntry(entry)` — invokes Tauri `save_history_entry`.
   - `listHistory(page, pageSize)` — invokes Tauri `list_history`.
-  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, and `HistoryPage` TS interfaces.
-- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
+  - `copyFiles(sourceRoot, destinationRoot, items)` — invokes Tauri `copy_files`.
+  - `onCopyProgress(callback)` — subscribes to `copy:progress` events.
+  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
+    `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
+- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), copy state (`copyProgress`, `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`, `onCopyProgress`, `resetCopy`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
 - **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
 ### 6. Tauri Integration (`src-tauri/src/`)
 
-**Status: 🚧 Partial — scan→compare→copy→history wired, no copy UI yet**
+**Status: 🚧 Partial — scan→compare→copy→history wired end-to-end, no scanner/comparator/copy-engine/history feature stubs yet**
 
 - Tauri v2 app with dialog plugin registered.
 - SQLite database initialized at app startup in the platform app data directory
@@ -185,7 +192,7 @@ error display formatting, and serialization roundtrip.
 | Aspect | Current State |
 |--------|--------------|
 | Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 22 (history) + 17 (copy_engine) + 14 (commands) = passes |
-| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 11 (store) — Vitest + jsdom |
+| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 31 (CopyProgressView) + 21 (HistoryView) + 11 (store) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |

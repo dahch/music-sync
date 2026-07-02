@@ -26,10 +26,10 @@ src-tauri/
 
 src/                     # Frontend (Feature-Sliced Design)
 ├── app/                 # App entry (main.tsx → App.tsx → HomePage)
-├── pages/               # home: FolderSelection + ComparisonView                      ✅
-├── features/            # folder-selection ✅, comparison-view ✅, rest stubs          🚧
+├── pages/               # home: FolderSelection + ComparisonView + CopyProgressView + HistoryView  ✅
+├── features/            # folder-selection ✅, comparison-view ✅, copy-progress ✅, history-view ✅, rest stubs  🚧
 ├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile, SyncHistoryEntry…   ✅
-└── shared/              # api (scanAndCompare, calculateSizeAndSpace, saveHistoryEntry, listHistory ✅), store (selection + space check), lib stubs  🚧
+└── shared/              # api (scanAndCompare, calculateSizeAndSpace, saveHistoryEntry, listHistory, copyFiles, onCopyProgress ✅), store (selection + space check + copy state), lib stubs  🚧
 
 Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```
