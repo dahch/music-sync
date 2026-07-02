@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 import type { ComparisonResult, DiffStatus, ComparisonEntry } from "@/entities/music-file";
 import { useAppStore } from "@/shared/store";
+import { formatSize } from "@/shared/format-size";
 
 const STATUS_LABEL: Record<DiffStatus, string> = {
   New: "New",
@@ -18,14 +19,6 @@ const STATUS_COLOR: Record<DiffStatus, string> = {
 };
 
 const SPACE_CHECK_DEBOUNCE_MS = 300;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  const mb = bytes / (1024 * 1024);
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 export function ComparisonSummary({ result }: { result: ComparisonResult }) {
   const { stats } = result;

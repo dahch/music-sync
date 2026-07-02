@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { CopyProgressView, formatSize, statusLabel, statusColor } from "./CopyProgressView";
+import { CopyProgressView, statusLabel, statusColor } from "./CopyProgressView";
+import { formatSize } from "@/shared/format-size";
 import { useAppStore } from "@/shared/store";
 
 function resetStore() {

@@ -1,13 +1,6 @@
 import { useAppStore } from "@/shared/store";
+import { formatSize } from "@/shared/format-size";
 import type { CopyItemResult } from "@/entities/music-file";
-
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  const mb = bytes / (1024 * 1024);
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 export function statusLabel(status: CopyItemResult["status"]): string {
   if (status === "Done") return "Done";
