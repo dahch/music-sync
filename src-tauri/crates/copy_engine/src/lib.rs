@@ -1,9 +1,13 @@
 use music_sync_domain::CopyStatus;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Mutex;
+use tokio::sync::watch;
 
 const DEFAULT_CHUNK_SIZE: u64 = 1_048_576; // 1 MiB
 
@@ -47,6 +51,7 @@ pub enum CopyError {
     IoError(std::io::Error),
     VerificationFailed(PathBuf),
     RenameFailed(PathBuf, std::io::Error),
+    Cancelled,
 }
 
 impl std::fmt::Display for CopyError {
@@ -57,6 +62,7 @@ impl std::fmt::Display for CopyError {
             Self::IoError(e) => write!(f, "I/O error: {}", e),
             Self::VerificationFailed(p) => write!(f, "verification failed: {}", p.display()),
             Self::RenameFailed(p, _) => write!(f, "rename failed: {}", p.display()),
+            Self::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -64,6 +70,86 @@ impl std::fmt::Display for CopyError {
 impl From<std::io::Error> for CopyError {
     fn from(e: std::io::Error) -> Self {
         CopyError::IoError(e)
+    }
+}
+
+struct CopyHandleInner {
+    cancel: AtomicBool,
+    pause_rx: Mutex<watch::Receiver<bool>>,
+}
+
+/// Read-side for the engine loop — checks pause/cancel signals.
+#[derive(Clone)]
+pub struct CopyHandle {
+    inner: Arc<CopyHandleInner>,
+}
+
+impl CopyHandle {
+    pub fn new_pair() -> (Self, CopyController) {
+        let (tx, rx) = watch::channel(false);
+        let inner = Arc::new(CopyHandleInner {
+            cancel: AtomicBool::new(false),
+            pause_rx: Mutex::new(rx),
+        });
+        let handle = Self { inner: inner.clone() };
+        let controller = CopyController {
+            inner,
+            pause_tx: tx,
+        };
+        (handle, controller)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Blocks until not paused or cancelled. Returns `Err` if cancelled while waiting.
+    pub async fn wait_if_paused(&self) -> Result<(), ()> {
+        loop {
+            if self.is_cancelled() {
+                return Err(());
+            }
+            let paused = {
+                let rx = self.inner.pause_rx.lock().await;
+                let val = *rx.borrow();
+                val
+            };
+            if !paused {
+                return Ok(());
+            }
+            let mut rx = self.inner.pause_rx.lock().await;
+            let _ = rx.changed().await;
+        }
+    }
+}
+
+/// Write-side for the frontend — sends pause/resume/cancel signals.
+/// Shares the same cancel flag as the corresponding `CopyHandle`.
+#[derive(Clone)]
+pub struct CopyController {
+    inner: Arc<CopyHandleInner>,
+    pause_tx: watch::Sender<bool>,
+}
+
+impl CopyController {
+    pub fn pause(&self) {
+        let _ = self.pause_tx.send(true);
+    }
+
+    pub fn resume(&self) {
+        let _ = self.pause_tx.send(false);
+    }
+
+    pub fn cancel(&self) {
+        self.inner.cancel.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        *self.pause_tx.borrow()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancel.load(Ordering::Relaxed)
     }
 }
 
@@ -114,12 +200,23 @@ impl CopyEngine {
         destination_root: &Path,
         items: &[CopyItem],
         progress_tx: UnboundedSender<CopyProgress>,
+        handle: &CopyHandle,
     ) -> Vec<CopyItemResult> {
         let total_files = items.len() as u64;
         let mut results = Vec::with_capacity(items.len());
         let mut files_completed = 0u64;
 
         for item in items {
+            // Check cancel before starting a new file
+            if handle.is_cancelled() {
+                break;
+            }
+
+            // Wait if paused (blocks until resumed or cancelled)
+            if handle.wait_if_paused().await.is_err() {
+                break;
+            }
+
             if !is_safe_relative(&item.relative_path) {
                 files_completed += 1;
                 let _ = progress_tx.send(CopyProgress {
@@ -140,12 +237,13 @@ impl CopyEngine {
             let dst = destination_root.join(&item.relative_path);
 
             let copy_result = self
-                .copy_file(&src, &dst, &progress_tx, item, files_completed, total_files)
+                .copy_file(&src, &dst, &progress_tx, item, files_completed, total_files, handle)
                 .await;
 
             files_completed += 1;
             let (status, file_size) = match copy_result {
                 Ok(size) => (CopyStatus::Done, size),
+                Err(CopyError::Cancelled) => (CopyStatus::Cancelled, 0),
                 Err(e) => (CopyStatus::Failed(e.to_string()), 0),
             };
 
@@ -163,6 +261,25 @@ impl CopyEngine {
             });
         }
 
+        // Mark any remaining items as Cancelled and emit progress for each
+        let processed = results.len();
+        if processed < items.len() {
+            for remaining in &items[processed..] {
+                files_completed += 1;
+                let _ = progress_tx.send(CopyProgress {
+                    current_file: remaining.relative_path.clone(),
+                    bytes_copied: 0,
+                    total_file_size: 0,
+                    files_completed,
+                    total_files,
+                });
+                results.push(CopyItemResult {
+                    relative_path: remaining.relative_path.clone(),
+                    status: CopyStatus::Cancelled,
+                });
+            }
+        }
+
         results
     }
 
@@ -177,6 +294,7 @@ impl CopyEngine {
         item: &CopyItem,
         files_completed: u64,
         total_files: u64,
+        handle: &CopyHandle,
     ) -> Result<u64, CopyError> {
         let tmp = tmp_path(dst);
         if let Some(parent) = tmp.parent() {
@@ -197,6 +315,12 @@ impl CopyEngine {
         let mut hasher = if item.verify { Some(blake3::Hasher::new()) } else { None };
 
         loop {
+            if handle.is_cancelled() {
+                drop(dst_file);
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(CopyError::Cancelled);
+            }
+
             let bytes_read = src_file.read(&mut buffer).await?;
             if bytes_read == 0 {
                 break;
@@ -220,6 +344,11 @@ impl CopyEngine {
         dst_file.flush().await?;
         drop(dst_file);
 
+        if handle.is_cancelled() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(CopyError::Cancelled);
+        }
+
         // Optionally verify: hash the temp file and compare with source hash
         if let Some(src_hasher) = hasher {
             let _ = progress_tx.send(CopyProgress {
@@ -236,6 +365,11 @@ impl CopyEngine {
             let mut tmp_hasher = blake3::Hasher::new();
             let mut verify_buf = vec![0u8; self.chunk_size as usize];
             loop {
+                if handle.is_cancelled() {
+                    drop(tmp_file);
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return Err(CopyError::Cancelled);
+                }
                 let n = tmp_file.read(&mut verify_buf).await?;
                 if n == 0 {
                     break;
@@ -250,8 +384,16 @@ impl CopyEngine {
             }
         }
 
+        if handle.is_cancelled() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(CopyError::Cancelled);
+        }
+
         // Atomic rename
-        tokio::fs::rename(&tmp, dst).await.map_err(|e| CopyError::RenameFailed(dst.to_path_buf(), e))?;
+        if let Err(e) = tokio::fs::rename(&tmp, dst).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(CopyError::RenameFailed(dst.to_path_buf(), e));
+        }
 
         Ok(file_size)
     }
@@ -272,6 +414,11 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
+    fn noop_handle() -> CopyHandle {
+        let (h, _ctrl) = CopyHandle::new_pair();
+        h
+    }
+
     async fn collect_results(
         source_root: &Path,
         destination_root: &Path,
@@ -282,10 +429,11 @@ mod tests {
             let items = items.to_vec();
             let source_root = source_root.to_path_buf();
             let destination_root = destination_root.to_path_buf();
+            let ctrl = noop_handle();
             tokio::spawn(async move {
                 let engine = CopyEngine::new();
                 engine
-                    .execute(&source_root, &destination_root, &items, tx)
+                    .execute(&source_root, &destination_root, &items, tx, &ctrl)
                     .await
             })
         };
@@ -473,10 +621,11 @@ mod tests {
 
         let engine = CopyEngine::new();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let ctrl = noop_handle();
         let handle = tokio::spawn(async move {
             let items = vec![item("secret.flac")];
             engine
-                .execute(src_dir.path(), dst_dir.path(), &items, tx)
+                .execute(src_dir.path(), dst_dir.path(), &items, tx, &ctrl)
                 .await
         });
 
@@ -505,9 +654,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let src = src_dir.path().to_path_buf();
         let dst = dst_path.clone();
+        let ctrl = noop_handle();
         let handle = tokio::spawn(async move {
             let items = vec![item("song.flac")];
-            engine.execute(&src, &dst, &items, tx).await
+            engine.execute(&src, &dst, &items, tx, &ctrl).await
         });
 
         while rx.recv().await.is_some() {}
@@ -530,10 +680,11 @@ mod tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let dst_copy = dst.clone();
+        let ctrl = noop_handle();
         let handle = tokio::spawn(async move {
             let engine = CopyEngine::with_chunk_size(64);
             let items = vec![item("f.flac")];
-            engine.execute(&src, &dst, &items, tx).await
+            engine.execute(&src, &dst, &items, tx, &ctrl).await
         });
 
         while rx.recv().await.is_some() {}
@@ -707,10 +858,11 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let src = src_dir.path().to_path_buf();
         let dst = dst_dir.path().to_path_buf();
+        let ctrl = noop_handle();
         let handle = tokio::spawn(async move {
             let engine = CopyEngine::new();
             engine
-                .execute(&src, &dst, &[item("f.flac")], tx)
+                .execute(&src, &dst, &[item("f.flac")], tx, &ctrl)
                 .await
         });
         // Consume all progress
@@ -725,13 +877,14 @@ mod tests {
         let dst_dir = TempDir::new().unwrap();
         std::fs::write(src_dir.path().join("f.flac"), b"data").unwrap();
 
+        let ctrl = noop_handle();
         // Default engine
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
         let src1 = src_dir.path().to_path_buf();
         let dst1 = dst_dir.path().to_path_buf();
         let handle1 = tokio::spawn(async move {
             CopyEngine::default()
-                .execute(&src1, &dst1, &[item("f.flac")], tx1)
+                .execute(&src1, &dst1, &[item("f.flac")], tx1, &ctrl)
                 .await
         });
         while rx1.recv().await.is_some() {}
@@ -741,9 +894,10 @@ mod tests {
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
         let src2 = src_dir.path().to_path_buf();
         let dst2 = dst_dir.path().to_path_buf();
+        let ctrl2 = noop_handle();
         let handle2 = tokio::spawn(async move {
             CopyEngine::new()
-                .execute(&src2, &dst2, &[item("f.flac")], tx2)
+                .execute(&src2, &dst2, &[item("f.flac")], tx2, &ctrl2)
                 .await
         });
         while rx2.recv().await.is_some() {}
@@ -830,8 +984,9 @@ mod tests {
 
         let engine = CopyEngine::new();
         let items = vec![item("a.flac")];
+        let ctrl = noop_handle();
         let results = engine
-            .execute(src_dir.path(), dst_dir.path(), &items, tx)
+            .execute(src_dir.path(), dst_dir.path(), &items, tx, &ctrl)
             .await;
 
         assert_eq!(results.len(), 1);
@@ -853,9 +1008,10 @@ mod tests {
             relative_path: PathBuf::from("../secret.flac"),
             verify: false,
         }];
+        let ctrl = noop_handle();
 
         let results = engine
-            .execute(src_dir.path(), dst_dir.path(), &items, tx)
+            .execute(src_dir.path(), dst_dir.path(), &items, tx, &ctrl)
             .await;
 
         assert_eq!(results.len(), 1);
@@ -880,10 +1036,11 @@ mod tests {
             relative_path: PathBuf::from("../bad.flac"),
             verify: false,
         }];
+        let ctrl = noop_handle();
 
         let handle = tokio::spawn(async move {
             engine
-                .execute(src_dir.path(), dst_dir.path(), &items, tx)
+                .execute(src_dir.path(), dst_dir.path(), &items, tx, &ctrl)
                 .await
         });
 
@@ -916,13 +1073,14 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let src = src_dir.path().to_path_buf();
         let dst = dst_dir.path().to_path_buf();
+        let ctrl = noop_handle();
 
         let handle = tokio::spawn(async move {
             let items = vec![CopyItem {
                 relative_path: PathBuf::from("large.flac"),
                 verify: true,
             }];
-            engine.execute(&src, &dst, &items, tx).await
+            engine.execute(&src, &dst, &items, tx, &ctrl).await
         });
 
         while rx.recv().await.is_some() {}
@@ -964,5 +1122,442 @@ mod tests {
         for r in &results {
             assert_eq!(r.status, CopyStatus::Done);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyHandle / CopyController — pause, resume, cancel
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn pause_blocks_before_next_file() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        // Use multi-chunk files so the test has time to react mid-copy
+        let a_content = vec![0xAAu8; 128 * 1024]; // 128 KiB
+        let b_content = vec![0xBBu8; 64 * 1024];  // 64 KiB
+        std::fs::write(src_dir.path().join("a.wav"), &a_content).unwrap();
+        std::fs::write(src_dir.path().join("b.wav"), &b_content).unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.wav"), item("b.wav")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        // Use small chunk so a.wav needs several chunks
+        let engine = CopyEngine::with_chunk_size(16 * 1024); // 16 KiB
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Wait for first chunk progress of a.wav
+        let _first = rx.recv().await.expect("first chunk progress");
+        // Pause now — a.wav will finish its remaining chunks (must complete current file),
+        // but b.wav must not start
+        ctrl.pause();
+
+        // Drain remaining progress as a.wav completes
+        while let Some(p) = rx.recv().await {
+            if p.files_completed >= 1 {
+                // a.wav is fully done (all bytes + rename)
+                break;
+            }
+        }
+
+        assert!(dst_dir.path().join("a.wav").exists());
+        assert!(!dst_dir.path().join("b.wav").exists(), "b.wav must not start while paused");
+
+        // Resume to finish
+        ctrl.resume();
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert_eq!(results[1].status, CopyStatus::Done);
+        assert!(dst_dir.path().join("b.wav").exists());
+        assert_eq!(std::fs::read(dst_dir.path().join("a.wav")).unwrap(), a_content);
+        assert_eq!(std::fs::read(dst_dir.path().join("b.wav")).unwrap(), b_content);
+    }
+
+    #[tokio::test]
+    async fn resume_does_not_re_copy_completed_files() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"aaa").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        while let Some(p) = rx.recv().await {
+            if p.files_completed >= 1 {
+                break;
+            }
+        }
+
+        ctrl.pause();
+        ctrl.resume();
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert_eq!(results[1].status, CopyStatus::Done);
+        let b_meta = std::fs::metadata(dst_dir.path().join("b.flac")).unwrap();
+        assert_eq!(b_meta.len(), 3, "b.flac should be copied once");
+    }
+
+    #[tokio::test]
+    async fn cancel_stops_after_current_file() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"aaa").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
+        std::fs::write(src_dir.path().join("c.flac"), b"ccc").unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac"), item("c.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        while let Some(p) = rx.recv().await {
+            if p.files_completed >= 1 {
+                break;
+            }
+        }
+
+        ctrl.cancel();
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert_eq!(results[1].status, CopyStatus::Cancelled);
+        assert_eq!(results[2].status, CopyStatus::Cancelled);
+        assert!(dst_dir.path().join("a.flac").exists());
+    }
+
+    #[tokio::test]
+    async fn cancel_during_file_cleans_up_tmp() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let content = vec![0xFFu8; 64 * 1024];
+        std::fs::write(src_dir.path().join("big.flac"), &content).unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("big.flac"), item("other.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        let engine = CopyEngine::with_chunk_size(1024);
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Wait for first progress event (mid-file)
+        let _ = rx.recv().await;
+        ctrl.cancel();
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].status, CopyStatus::Cancelled);
+        assert_eq!(results[1].status, CopyStatus::Cancelled);
+
+        assert!(!dst_dir.path().join("big.flac.musicsync.tmp").exists());
+        assert!(!dst_dir.path().join("big.flac").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyError::Display — Cancelled variant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_error_display_cancelled() {
+        let err = CopyError::Cancelled;
+        assert_eq!(err.to_string(), "cancelled");
+    }
+
+    // -----------------------------------------------------------------------
+    // Verification — corruption detection (hash mismatch)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn verify_detects_corruption() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let content = b"verifiable content that must match exactly";
+        std::fs::write(src_dir.path().join("corrupt.flac"), content).unwrap();
+
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![CopyItem {
+            relative_path: PathBuf::from("corrupt.flac"),
+            verify: true,
+        }];
+
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+        let engine = CopyEngine::new();
+
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Consume progress; the pre-verify event has bytes_copied == total_file_size
+        // but files_completed still 0 (not yet incremented). Corrupt the tmp file here.
+        while let Some(p) = rx.recv().await {
+            if p.bytes_copied == p.total_file_size && p.bytes_copied > 0 && p.files_completed == 0 {
+                // The tmp file exists — corrupt it before verification reads it
+                let tmp = dst_dir.path().join("corrupt.flac.musicsync.tmp");
+                if tmp.exists() {
+                    std::fs::write(&tmp, b"corrupted data").unwrap();
+                }
+                break;
+            }
+        }
+
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0].status, CopyStatus::Failed(msg) if msg.contains("verification failed")),
+            "expected verification failure, got {:?}",
+            results[0].status
+        );
+        // No tmp file should remain after cleanup
+        assert!(!dst_dir.path().join("corrupt.flac.musicsync.tmp").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancel during verification phase
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn cancel_during_verify_cleans_up_tmp() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        // Use a file large enough that verify needs multiple read chunks
+        let content = vec![0xCDu8; 128 * 1024]; // 128 KiB
+        std::fs::write(src_dir.path().join("big.flac"), &content).unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![CopyItem {
+            relative_path: PathBuf::from("big.flac"),
+            verify: true,
+        }];
+
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+        let engine = CopyEngine::with_chunk_size(64 * 1024); // 64 KiB chunks
+
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Wait for the pre-verify progress event (bytes_copied == total_file_size)
+        while let Some(p) = rx.recv().await {
+            if p.bytes_copied > 0 && p.bytes_copied == p.total_file_size && p.files_completed == 0 {
+                // Cancel now — the verify loop checks cancel before each chunk read
+                ctrl.cancel();
+                break;
+            }
+        }
+
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, CopyStatus::Cancelled);
+        // No tmp file should remain
+        assert!(!dst_dir.path().join("big.flac.musicsync.tmp").exists());
+        // No final file should exist
+        assert!(!dst_dir.path().join("big.flac").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Rename failure (e.g., destination path is a directory)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn rename_failure_when_destination_is_directory() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("song.flac"), b"data").unwrap();
+        // Create a directory at the destination path — rename will fail with EISDIR
+        std::fs::create_dir(dst_dir.path().join("song.flac")).unwrap();
+
+        let engine = CopyEngine::new();
+        let dst_root = dst_dir.path().to_path_buf();
+        let dst_for_spawn = dst_root.clone();
+        let ctrl = noop_handle();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            engine
+                .execute(src_dir.path(), &dst_for_spawn, &[item("song.flac")], tx, &ctrl)
+                .await
+        });
+
+        while rx.recv().await.is_some() {}
+        let results = handle.await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0].status, CopyStatus::Failed(msg) if msg.contains("rename failed")),
+            "expected rename failure, got {:?}",
+            results[0].status
+        );
+        // tmp file should be cleaned up
+        assert!(!dst_root.join("song.flac.musicsync.tmp").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple unsafe paths are all rejected
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn multiple_unsafe_paths_all_rejected() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = CopyEngine::new();
+        let items = vec![
+            CopyItem { relative_path: PathBuf::from("../a.flac"), verify: false },
+            CopyItem { relative_path: PathBuf::from("sub/../../b.flac"), verify: false },
+        ];
+        let ctrl = noop_handle();
+
+        let handle = tokio::spawn(async move {
+            engine
+                .execute(src_dir.path(), dst_dir.path(), &items, tx, &ctrl)
+                .await
+        });
+
+        let mut progress_events = Vec::new();
+        while let Some(p) = rx.recv().await {
+            progress_events.push(p);
+        }
+        let results = handle.await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert!(
+                matches!(&r.status, CopyStatus::Failed(msg) if msg.contains("unsafe path")),
+                "expected unsafe path rejection, got {:?}",
+                r.status
+            );
+        }
+        // Progress events emitted for each unsafe item
+        assert_eq!(progress_events.len(), 2);
+        assert_eq!(progress_events.last().unwrap().files_completed, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancel before processing any items — all remainders marked Cancelled
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn cancel_before_any_file_marks_all_as_cancelled() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"a").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"b").unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        ctrl.cancel(); // Cancel before starting
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = CopyEngine::new();
+        let items = vec![item("a.flac"), item("b.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Drain — should close quickly since cancel is pre-set
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].status, CopyStatus::Cancelled);
+        assert_eq!(results[1].status, CopyStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_remaining_as_cancelled() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"a").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"b").unwrap();
+        std::fs::write(src_dir.path().join("c.flac"), b"c").unwrap();
+        std::fs::write(src_dir.path().join("d.flac"), b"d").unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![
+            item("a.flac"), item("b.flac"), item("c.flac"), item("d.flac"),
+        ];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        // Let first two finish
+        while let Some(p) = rx.recv().await {
+            if p.files_completed >= 2 {
+                break;
+            }
+        }
+        ctrl.cancel();
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert_eq!(results[1].status, CopyStatus::Done);
+        assert_eq!(results[2].status, CopyStatus::Cancelled);
+        assert_eq!(results[3].status, CopyStatus::Cancelled);
+        assert!(dst_dir.path().join("a.flac").exists());
+        assert!(dst_dir.path().join("b.flac").exists());
     }
 }
