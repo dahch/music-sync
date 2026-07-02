@@ -94,6 +94,14 @@ export function onCopyProgress(
   });
 }
 
+export function onVolumeUnmounted(
+  callback: (message: string) => void,
+): Promise<UnlistenFn> {
+  return listen<string>("volume:unmounted", (event) => {
+    callback(event.payload);
+  });
+}
+
 export async function pauseCopy(): Promise<void> {
   return invoke("pause_copy");
 }

@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { FolderSelection } from "@/features/folder-selection";
 import { ComparisonView } from "@/features/comparison-view";
 import { CopyProgressView } from "@/features/copy-progress";
 import { HistoryView } from "@/features/history-view";
-import { scanAndCompare, onScanProgress, onCopyProgress as listenCopyProgress } from "@/shared/api";
+import { scanAndCompare, onScanProgress, onCopyProgress as listenCopyProgress, onVolumeUnmounted } from "@/shared/api";
 import { useAppStore } from "@/shared/store";
 import type { ComparisonResult, ScanProgress, CopyProgress } from "@/shared/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -18,8 +18,7 @@ export function HomePage() {
   const [showHistory, setShowHistory] = useState(false);
   const [sourceRoot, setSourceRoot] = useState<string | null>(null);
   const [destRoot, setDestRoot] = useState<string | null>(null);
-
-  const copyUnlistenRef = useRef<UnlistenFn | null>(null);
+  const [unmountMsg, setUnmountMsg] = useState<string | null>(null);
 
   const selectedPaths = useAppStore((s) => s.selectedPaths);
   const startCopy = useAppStore((s) => s.startCopy);
@@ -36,6 +35,7 @@ export function HomePage() {
       setProgress(null);
       setResult(null);
       setError(null);
+      setUnmountMsg(null);
       setSourceRoot(source);
       setDestRoot(dest);
 
@@ -64,21 +64,26 @@ export function HomePage() {
     if (!result || !sourceRoot || !destRoot || selectedPaths.length === 0) return;
 
     setShowHistory(false);
+    setUnmountMsg(null);
 
-    const unlisten = await listenCopyProgress((p: CopyProgress) => {
+    const unlisteners: UnlistenFn[] = [];
+
+    const unlistenProgress = await listenCopyProgress((p: CopyProgress) => {
       storeOnCopyProgress(p);
     });
-    copyUnlistenRef.current = unlisten;
+    unlisteners.push(unlistenProgress);
+
+    const unlistenVolume = await onVolumeUnmounted((msg) => {
+      setUnmountMsg(msg);
+    });
+    unlisteners.push(unlistenVolume);
 
     try {
       await startCopy(sourceRoot, destRoot, selectedPaths, verifyCopy);
     } catch {
       // Error is handled in store (sets copyError)
     } finally {
-      if (copyUnlistenRef.current) {
-        copyUnlistenRef.current();
-        copyUnlistenRef.current = null;
-      }
+      unlisteners.forEach((fn) => fn());
     }
   }, [result, sourceRoot, destRoot, selectedPaths, startCopy, storeOnCopyProgress, verifyCopy]);
 
@@ -151,7 +156,24 @@ export function HomePage() {
       )}
 
       {(copyRunning || copyDone || copyError) && (
-        <CopyProgressView />
+        <>
+          {unmountMsg && (
+            <div
+              style={{
+                margin: "1rem 0",
+                padding: "0.75rem 1rem",
+                backgroundColor: "#fff3e0",
+                border: "1px solid #ffb74d",
+                borderRadius: 6,
+                color: "#e65100",
+                fontSize: "0.85rem",
+              }}
+            >
+              {unmountMsg}
+            </div>
+          )}
+          <CopyProgressView />
+        </>
       )}
 
       {result && !copyRunning && !copyDone && (
