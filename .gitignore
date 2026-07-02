@@ -32,3 +32,6 @@ logs/
 # Tauri dev
 src-tauri/dev/
 src-tauri/gen/
+
+#Opencode Skills
+.opencode/skills/

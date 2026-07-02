@@ -117,7 +117,6 @@ Multi-platform build workflow (`.github/workflows/build.yml`) runs on every push
 | Platform | Target | Runner |
 |---|---|---|
 | macOS (Apple Silicon) | `aarch64-apple-darwin` | `macos-latest` |
-| macOS (Intel) | `x86_64-apple-darwin` | `macos-13` |
 | Windows | `x86_64-pc-windows-msvc` | `windows-latest` |
 | Linux | `x86_64-unknown-linux-gnu` | `ubuntu-latest` |
 
