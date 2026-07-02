@@ -218,8 +218,8 @@ describe("ComparisonList", () => {
     render(<ComparisonList result={sampleResult} selectedPaths={[]} onToggle={vi.fn()} />);
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Path")).toBeInTheDocument();
-    expect(screen.getByText("Source size")).toBeInTheDocument();
-    expect(screen.getByText("Dest size")).toBeInTheDocument();
+    expect(screen.getByText("Source")).toBeInTheDocument();
+    expect(screen.getByText("Dest")).toBeInTheDocument();
   });
 
   it("renders all entries as rows with checkboxes", () => {
@@ -319,7 +319,7 @@ describe("SelectionPanel", () => {
   it("shows selected count and size when items are selected", () => {
     useAppStore.setState({ selectedPaths: ["new.flac", "diff.flac"] });
     render(<SelectionPanel result={sampleResult} />);
-    expect(screen.getByText(/Selected:/)).toBeInTheDocument();
+    expect(screen.getByText(/file/)).toBeInTheDocument();
     expect(screen.getByText(/2 files/)).toBeInTheDocument();
   });
 
@@ -369,7 +369,7 @@ describe("ComparisonView", () => {
 
   it("renders result summary and entry table", () => {
     render(<ComparisonView result={sampleResult} />);
-    expect(screen.getByText(/Comparison results/)).toBeInTheDocument();
+    expect(screen.getByText(/Results/)).toBeInTheDocument();
     expect(screen.getByText("new.flac")).toBeInTheDocument();
     expect(screen.getByText("id.flac")).toBeInTheDocument();
     expect(screen.getByText("diff.flac")).toBeInTheDocument();
@@ -384,21 +384,21 @@ describe("ComparisonView", () => {
 
   it("displays comparison level in heading", () => {
     render(<ComparisonView result={sampleResult} />);
-    const heading = screen.getByText(/Comparison results/);
+    const heading = screen.getByText(/Results/);
     expect(heading.textContent).toContain("Metadata");
   });
 
   it("displays Fast comparison level", () => {
     const fast = { ...sampleResult, comparisonLevel: "Fast" as const };
     render(<ComparisonView result={fast} />);
-    const heading = screen.getByText(/Comparison results/);
+    const heading = screen.getByText(/Results/);
     expect(heading.textContent).toContain("Fast");
   });
 
   it("displays Strict comparison level", () => {
     const strict = { ...sampleResult, comparisonLevel: "Strict" as const };
     render(<ComparisonView result={strict} />);
-    const heading = screen.getByText(/Comparison results/);
+    const heading = screen.getByText(/Results/);
     expect(heading.textContent).toContain("Strict");
   });
 
@@ -506,7 +506,7 @@ describe("SelectionPanel — edge cases", () => {
   it("does not count selected entries without source in selectedCount", () => {
     useAppStore.setState({ selectedPaths: ["orph.flac"] });
     render(<SelectionPanel result={sampleResult} />);
-    expect(screen.queryByText(/Selected:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/file selected/)).not.toBeInTheDocument();
     expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
   });
 
@@ -536,7 +536,7 @@ describe("SelectionPanel — edge cases", () => {
       spaceLoading: false,
     });
     render(<SelectionPanel result={sampleResult} />);
-    expect(screen.getByText(/Selected:/)).toBeInTheDocument();
+    expect(screen.getByText(/file/)).toBeInTheDocument();
     expect(screen.queryByText(/Free on destination/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Checking free space/)).not.toBeInTheDocument();
   });

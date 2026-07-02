@@ -25,7 +25,7 @@ describe("FolderSelection", () => {
     render(<FolderSelection onCompare={vi.fn()} disabled={true} />);
     const compareBtn = screen.getByText("Compare").closest("button");
     expect(compareBtn).toBeDisabled();
-    const browseBtns = screen.getAllByText("Browse…");
+    const browseBtns = screen.getAllByText("Browse");
     for (const btn of browseBtns) {
       expect(btn).toBeDisabled();
     }
@@ -37,12 +37,10 @@ describe("FolderSelection", () => {
     expect(compareBtn).toBeDisabled();
   });
 
-  it("renders comparison level selector with all options", () => {
+  it("renders comparison level selector with default value", () => {
     render(<FolderSelection onCompare={vi.fn()} disabled={false} />);
     expect(screen.getByText("Comparison level")).toBeInTheDocument();
-    expect(screen.getByText("Fast (path only)")).toBeInTheDocument();
-    expect(screen.getByText("Metadata (size + mtime)")).toBeInTheDocument();
-    expect(screen.getByText("Strict (hash) — coming soon")).toBeInTheDocument();
+    expect(screen.getByText("Metadata")).toBeInTheDocument();
   });
 
   // --- Interaction tests ---
@@ -58,7 +56,7 @@ describe("FolderSelection", () => {
     expect(screen.getByText("Compare").closest("button")).toBeDisabled();
 
     // Browse source
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     await waitFor(() => {
       expect(screen.getByDisplayValue("/src/music")).toBeInTheDocument();
     });
@@ -66,7 +64,7 @@ describe("FolderSelection", () => {
     expect(screen.getByText("Compare").closest("button")).toBeDisabled();
 
     // Browse dest
-    fireEvent.click(screen.getAllByText("Browse…")[1]);
+    fireEvent.click(screen.getAllByText("Browse")[1]);
     await waitFor(() => {
       expect(screen.getByDisplayValue("/dst/music")).toBeInTheDocument();
     });
@@ -82,12 +80,12 @@ describe("FolderSelection", () => {
 
     render(<FolderSelection onCompare={onCompare} disabled={false} />);
 
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     await waitFor(() => {
       expect(screen.getByDisplayValue("/src")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getAllByText("Browse…")[1]);
+    fireEvent.click(screen.getAllByText("Browse")[1]);
     await waitFor(() => {
       expect(screen.getByDisplayValue("/dst")).toBeInTheDocument();
     });
@@ -105,13 +103,14 @@ describe("FolderSelection", () => {
     render(<FolderSelection onCompare={onCompare} disabled={false} />);
 
     // Fill paths
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     await waitFor(() => expect(screen.getByDisplayValue("/src")).toBeInTheDocument());
-    fireEvent.click(screen.getAllByText("Browse…")[1]);
+    fireEvent.click(screen.getAllByText("Browse")[1]);
     await waitFor(() => expect(screen.getByDisplayValue("/dst")).toBeInTheDocument());
 
-    // Select "Fast" level
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Fast" } });
+    // Open dropdown and select "Fast"
+    fireEvent.click(screen.getByText("Metadata"));
+    fireEvent.click(screen.getByText("Fast"));
 
     fireEvent.click(screen.getByText("Compare"));
     expect(onCompare).toHaveBeenCalledWith("/src", "/dst", "Fast");
@@ -125,12 +124,14 @@ describe("FolderSelection", () => {
 
     render(<FolderSelection onCompare={onCompare} disabled={false} />);
 
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     await waitFor(() => expect(screen.getByDisplayValue("/src")).toBeInTheDocument());
-    fireEvent.click(screen.getAllByText("Browse…")[1]);
+    fireEvent.click(screen.getAllByText("Browse")[1]);
     await waitFor(() => expect(screen.getByDisplayValue("/dst")).toBeInTheDocument());
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Strict" } });
+    // Open dropdown and select "Strict"
+    fireEvent.click(screen.getByText("Metadata"));
+    fireEvent.click(screen.getByText("Strict"));
 
     fireEvent.click(screen.getByText("Compare"));
     expect(onCompare).toHaveBeenCalledWith("/src", "/dst", "Strict");
@@ -143,7 +144,7 @@ describe("FolderSelection", () => {
     render(<FolderSelection onCompare={vi.fn()} disabled={false} />);
 
     // Browse source — dialog returns null
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     // After the handler completes (async), the input should still be empty
     await waitFor(() => {
       // The readOnly inputs have no value set — the placeholder is visible
@@ -159,7 +160,7 @@ describe("FolderSelection", () => {
 
     render(<FolderSelection onCompare={vi.fn()} disabled={false} />);
 
-    fireEvent.click(screen.getAllByText("Browse…")[0]);
+    fireEvent.click(screen.getAllByText("Browse")[0]);
     await waitFor(() => {
       expect(screen.getByPlaceholderText("Select source folder...")).toBeInTheDocument();
     });

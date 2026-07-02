@@ -52,7 +52,7 @@ describe("HistoryView", () => {
   it("shows loading state initially", () => {
     mockList.mockReturnValue(new Promise(() => {})); // never resolves
     render(<HistoryView />);
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
   });
 
   it("shows empty state when no history", async () => {
@@ -297,7 +297,7 @@ describe("HistoryView", () => {
     render(<HistoryView />);
     const statusSpan = await screen.findByText("Completed");
     // jsdom renders hex colors as rgb
-    expect(statusSpan.style.color).toBe("rgb(34, 197, 94)");
+    expect(statusSpan.style.color).toBe("var(--color-accent)");
   });
 
   it("renders status in red for Failed entries", async () => {
@@ -320,7 +320,7 @@ describe("HistoryView", () => {
     const allFailed = await screen.findAllByText("Failed");
     // The span is the element with the color style
     const statusSpan = allFailed.find((el) => el.tagName === "SPAN");
-    expect(statusSpan?.style.color).toBe("rgb(239, 68, 68)");
+    expect(statusSpan?.style.color).toBe("var(--color-danger)");
   });
 
   it("renders status in orange for other statuses (e.g. InProgress)", async () => {
@@ -340,7 +340,7 @@ describe("HistoryView", () => {
 
     render(<HistoryView />);
     const statusSpan = await screen.findByText("InProgress");
-    expect(statusSpan.style.color).toBe("rgb(245, 158, 11)");
+    expect(statusSpan.style.color).toBe("var(--color-warning)");
   });
 
   it("shows dash (—) for failed count when filesFailed is 0", async () => {

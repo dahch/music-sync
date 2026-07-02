@@ -81,35 +81,35 @@ describe("statusLabel", () => {
 
 describe("statusColor", () => {
   it('returns green for Done status', () => {
-    expect(statusColor("Done")).toBe("#22c55e");
+    expect(statusColor("Done")).toBe("var(--color-accent)");
   });
 
   it('returns gray for Pending status', () => {
-    expect(statusColor("Pending")).toBe("#71717a");
+    expect(statusColor("Pending")).toBe("var(--color-text-muted)");
   });
 
   it('returns blue for InProgress status', () => {
-    expect(statusColor("InProgress")).toBe("#3b82f6");
+    expect(statusColor("InProgress")).toBe("var(--color-info)");
   });
 
   it('returns red for Failed object status', () => {
-    expect(statusColor({ Failed: "error" })).toBe("#ef4444");
+    expect(statusColor({ Failed: "error" })).toBe("var(--color-danger)");
   });
 
   it('returns orange for Cancelled status', () => {
-    expect(statusColor("Cancelled")).toBe("#f59e0b");
+    expect(statusColor("Cancelled")).toBe("var(--color-warning)");
   });
 
   it('returns gray fallback for Skipped', () => {
-    expect(statusColor("Skipped")).toBe("#71717a");
+    expect(statusColor("Skipped")).toBe("var(--color-text-muted)");
   });
 
   it('returns gray fallback for Verifying', () => {
-    expect(statusColor("Verifying")).toBe("#71717a");
+    expect(statusColor("Verifying")).toBe("var(--color-text-muted)");
   });
 
   it('returns gray fallback for unknown status', () => {
-    expect(statusColor("Unknown" as any)).toBe("#71717a");
+    expect(statusColor("Unknown" as any)).toBe("var(--color-text-muted)");
   });
 });
 
@@ -120,13 +120,13 @@ describe("statusColor", () => {
 describe("CopyProgressView", () => {
   beforeEach(resetStore);
 
-  it("renders heading 'Copying…' when running", () => {
+  it("renders heading 'Copying...' when running", () => {
     useAppStore.setState({
       copyRunning: true,
       copyProgress: { currentFile: "song.flac", bytesCopied: 500, totalFileSize: 1000, filesCompleted: 1, totalFiles: 5 },
     });
     render(<CopyProgressView />);
-    expect(screen.getByText("Copying…")).toBeInTheDocument();
+    expect(screen.getByText("Copying...")).toBeInTheDocument();
     expect(screen.getByText(/1 \/ 5 files/)).toBeInTheDocument();
   });
 
@@ -143,7 +143,7 @@ describe("CopyProgressView", () => {
     expect(screen.getByText("Copy completed")).toBeInTheDocument();
   });
 
-  it("renders 'Copy completed with errors' when done with failures", () => {
+  it("renders 'Completed with errors' when done with failures", () => {
     useAppStore.setState({
       copyRunning: false,
       copyDone: true,
@@ -153,7 +153,7 @@ describe("CopyProgressView", () => {
       ],
     });
     render(<CopyProgressView />);
-    expect(screen.getByText("Copy completed with errors")).toBeInTheDocument();
+    expect(screen.getByText("Completed with errors")).toBeInTheDocument();
     expect(screen.getByText(/Failed: disk full/)).toBeInTheDocument();
   });
 
@@ -190,9 +190,9 @@ describe("CopyProgressView", () => {
     useAppStore.setState({ copyRunning: false, copyDone: false });
     render(<CopyProgressView />);
     // The h3 exists but contains no visible text
-    expect(screen.queryByText("Copying…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Copying...")).not.toBeInTheDocument();
     expect(screen.queryByText("Copy completed")).not.toBeInTheDocument();
-    expect(screen.queryByText("Copy completed with errors")).not.toBeInTheDocument();
+    expect(screen.queryByText("Completed with errors")).not.toBeInTheDocument();
   });
 
   it("does not render file list when copyResults is null", () => {
@@ -251,17 +251,17 @@ describe("CopyProgressView", () => {
     expect(bar).toBeInTheDocument();
   });
 
-  it("progress bar color is green (#22c55e / rgb(34,197,94)) when no failures", () => {
+  it("progress bar color is green (accent) when no failures", () => {
     useAppStore.setState({
       copyRunning: true,
       copyProgress: { currentFile: "a.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 1, totalFiles: 5 },
     });
     render(<CopyProgressView />);
     const innerBar = screen.getByTestId("progress-bar");
-    expect(innerBar.style.backgroundColor).toBe("rgb(34, 197, 94)");
+    expect(innerBar.style.backgroundColor).toBe("var(--color-accent)");
   });
 
-  it("progress bar color is red (#ef4444 / rgb(239,68,68)) when there are failures", () => {
+  it("progress bar color is red (danger) when there are failures", () => {
     useAppStore.setState({
       copyRunning: false,
       copyDone: true,
@@ -273,7 +273,7 @@ describe("CopyProgressView", () => {
     });
     render(<CopyProgressView />);
     const innerBar = screen.getByTestId("progress-bar");
-    expect(innerBar.style.backgroundColor).toBe("rgb(239, 68, 68)");
+    expect(innerBar.style.backgroundColor).toBe("var(--color-danger)");
   });
 
   it("shows progress info with B format for small files", () => {
@@ -446,14 +446,13 @@ describe("CopyProgressView", () => {
     expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
   });
 
-  it("shows 'paused at <file>' detail when paused with progress", () => {
+  it("shows current file detail when paused with progress", () => {
     useAppStore.setState({
       copyRunning: true,
       copyPaused: true,
       copyProgress: { currentFile: "artist/album/song.flac", bytesCopied: 2048, totalFileSize: 4096, filesCompleted: 2, totalFiles: 10 },
     });
     render(<CopyProgressView />);
-    expect(screen.getByText(/paused at/)).toBeInTheDocument();
     expect(screen.getByText("artist/album/song.flac")).toBeInTheDocument();
   });
 });
