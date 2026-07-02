@@ -159,8 +159,18 @@ and mount/unmounted detection between files.
 **Status: 🚧 Partial — scan→compare→copy→history pipeline works, no scanner/comparator/copy-engine/history feature stubs yet**
 
 - React 18 + TypeScript + Vite dev server (port 1420, HMR on 1421).
+- **Tailwind CSS v4** integrated via `@tailwindcss/vite` plugin. All components
+  styled with utility classes (migrated from inline styles).
+- **Design token system** in `src/index.css` — semantic color tokens
+  (`surface-0..3`, `border`, `text-primary/secondary/muted`, `accent`, `danger`,
+  `warning`, `info`) with light/dark theme support via `.dark` class on the root
+  element. Tokens are consumed as Tailwind utilities (`bg-surface-0`,
+  `text-text-primary`, `border-border`, etc.).
 - Feature-Sliced Design directory structure: `app/`, `pages/`, `features/`,
   `entities/`, `shared/`.
+- **App header** (`App.tsx`): sticky top bar with app logo (from `/icons/icon.png`),
+  app name, and a dark mode toggle switch. Dark mode persists via
+  `localStorage.theme` and applies the `.dark` class to the root element.
 - **Page:** `HomePage` orchestrates the full pipeline: folder selection → scan with
   progress display → comparison results → copy with progress → history save. Also
   toggles `HistoryView` panel showing past sync runs.
@@ -256,6 +266,6 @@ and mount/unmounted detection between files.
 | Rust test suite | 40 (domain) + 32 (scanner) + 30 (comparator) + 22 (history) + 70 (copy_engine) + 18 (commands: 8 parse + 6 space + 4 copy) = passes |
 | Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 25 (store) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
-| CI | Builds on 3 targets (macOS ARM, Windows, Linux) |
+| CI | Builds on 3 targets (macOS ARM, Windows, Linux) with path filters for docs-only changes; release workflow publishes installers on version tags |
 | Binary size | Not measured yet (dev build) |
 | Memory | Not profiled yet |

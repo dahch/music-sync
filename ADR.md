@@ -229,3 +229,64 @@ The copy engine (`CopyEngine::execute()`) now implements:
   orphan cleanup, pause/resume/cancel, pre-flight space check, and
   mount/unmounted detection.
 + Verification is opt-in — no overhead for users who don't need it.
+
+---
+
+## ADR-008: Frontend Styling — Tailwind CSS v4 with Design Tokens
+
+- **Date:** 2026-07-02
+- **Status:** Accepted
+
+### Context
+
+The frontend components were initially styled with inline styles and ad-hoc
+class strings. As the UI grew (header, dark mode, status-colored elements),
+a consistent styling system was needed to:
+- Enforce a cohesive visual language across all components.
+- Support light/dark themes without duplicating style logic.
+- Keep the bundle small (no unused CSS) with utility-first approach.
+
+### Alternatives considered
+
+| Option | Pros | Cons |
+|--------|------|------|
+| CSS Modules | Scoped styles, no build tooling | No design tokens, dark mode requires manual media queries |
+| Styled Components / Emotion | Runtime CSS-in-JS, dynamic styles | Runtime overhead, SSR complexity overkill for a desktop app |
+| Tailwind CSS v4 | Zero-runtime, atomic CSS, `@theme` for tokens, Vite plugin | Utility classes can be verbose, learning curve for token system |
+| Vanilla CSS with custom properties | Simple, no deps | No atomic utilities, harder to enforce consistency |
+
+### Decision
+
+**Tailwind CSS v4** with the `@tailwindcss/vite` plugin (no PostCSS config
+needed). Design tokens defined in `src/index.css` using Tailwind's `@theme`
+directive:
+
+- **Semantic color tokens:** `surface-0..3`, `border`, `border-subtle`,
+  `text-primary`, `text-secondary`, `text-muted`, `accent`, `accent-hover`,
+  `danger`, `danger-soft`, `warning`, `warning-soft`, `info`, `info-soft`.
+- **Light/dark variants:** light values in `@theme`, dark overrides in
+  `.dark { ... }` block. Dark mode toggled via `.dark` class on the root
+  element, persisted in `localStorage.theme`.
+- **Custom dark variant:** `@custom-variant dark (&:is(.dark *))` — class-based
+  (not media-query), giving the user explicit control.
+- **Fonts:** `--font-sans` (Inter) and `--font-mono` (JetBrains Mono) defined
+  in `@theme`.
+
+All components use Tailwind utility classes referencing these tokens
+(e.g., `bg-surface-0`, `text-text-primary`, `border-border`). Status-specific
+colors (emerald for New, amber for Orphan, red for Different) use Tailwind's
+built-in palette with `dark:` variants.
+
+### Consequences
+
++ Single source of truth for colors in `src/index.css` — changing a token
+  propagates everywhere automatically.
++ Dark mode is a class toggle, not a media query — user-controlled, no
+  system-preference detection (intentional for a desktop app).
++ Tailwind v4's Vite plugin eliminates PostCSS config — one import in
+  `vite.config.ts`.
++ Zero runtime CSS overhead — all styling is static atomic classes.
+- Verbose class strings in complex components (mitigated by consistent
+  token naming).
+- `CopyPlanView` still uses raw Tailwind colors (`zinc-*`, `emerald-*`)
+  instead of design tokens — should be migrated in a follow-up.

@@ -3,7 +3,7 @@
 Desktop application for comparing and syncing audio libraries between a local
 source folder and a portable device (DAC/USB storage).
 
-**Stack:** Tauri v2 + Rust (core) + React 18 / TypeScript / Vite (UI)
+**Stack:** Tauri v2 + Rust (core) + React 18 / TypeScript / Vite (UI) / Tailwind CSS v4
 
 ## Architecture
 
@@ -45,15 +45,18 @@ Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic ye
 #### Platform-specific
 
 **macOS:**
+
 ```bash
 xcode-select --install
 ```
 
 **Windows:**
+
 - [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with "Desktop development with C++"
 - [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 10+, but may need the Evergreen runtime)
 
 **Linux:**
+
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
@@ -66,9 +69,9 @@ pnpm install
 
 ### Environment Variables
 
-| Variable | Type | Default | Purpose |
-|---|---|---|---|
-| `TAURI_DEV_HOST` | `string` | unset | Set to network interface (e.g., `0.0.0.0`) to expose Vite dev server to other devices (e.g., testing on a real device). When set, enables WebSocket HMR on port 1421. |
+| Variable         | Type     | Default | Purpose                                                                                                                                                               |
+| ---------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TAURI_DEV_HOST` | `string` | unset   | Set to network interface (e.g., `0.0.0.0`) to expose Vite dev server to other devices (e.g., testing on a real device). When set, enables WebSocket HMR on port 1421. |
 
 ### Run (dev mode)
 
@@ -112,15 +115,21 @@ Scans the given path (defaults to current directory) and prints file count and e
 
 ## CI
 
-Multi-platform build workflow (`.github/workflows/build.yml`) runs on every push/PR to `main`:
+### Build (`.github/workflows/build.yml`)
 
-| Platform | Target | Runner |
-|---|---|---|---|
-| macOS (Apple Silicon) | `aarch64-apple-darwin` | `macos-latest` |
-| Windows | `x86_64-pc-windows-msvc` | `windows-latest` |
-| Linux | `x86_64-unknown-linux-gnu` | `ubuntu-latest` |
+Runs on every push/PR to `main` with **path filters** — skips builds for docs-only changes. Triggers only when source code, config, or lockfiles change (`src/**`, `src-tauri/**`, `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `tsconfig.json`, `index.html`, `Cargo.lock`).
+
+| Platform              | Target                     | Runner           |
+| --------------------- | -------------------------- | ---------------- |
+| macOS (Apple Silicon) | `aarch64-apple-darwin`     | `macos-latest`   |
+| Windows               | `x86_64-pc-windows-msvc`   | `windows-latest` |
+| Linux                 | `x86_64-unknown-linux-gnu` | `ubuntu-latest`  |
 
 Steps: install Rust, pnpm, Node.js 22, system deps (Linux only: webkit2gtk, GTK3, AppIndicator, librsvg, patchelf), `pnpm install`, `pnpm build`, `cargo build --target ${{ matrix.target }}`.
+
+### Release (`.github/workflows/release.yml`)
+
+Triggered by version tags (`v*`). Builds distributable packages on all three platforms, then creates a draft GitHub Release with installer files only (`.dmg`, `.msi`, `.exe`, `.deb`, `.rpm`, `.AppImage`). Non-installer bundle artifacts are cleaned before upload.
 
 ## License
 

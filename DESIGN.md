@@ -9,6 +9,7 @@
 │                    Frontend (React/TS)                          │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  app/     entry (main.tsx → App.tsx → HomePage)          │  │
+│  │           App.tsx: sticky header (logo + dark mode toggle)│  │
 │  │  pages/   home: FolderSelection + ComparisonView +        │  │
 │  │           CopyPlanView + CopyProgressView + HistoryView    │  │
 │  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
@@ -24,9 +25,11 @@
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  Package: music-sync (pnpm)  ·  Vite dev on :1420               │
-│  State: Zustand (selection + space check + copy + pause/       │
-│         resume/cancel + verify toggle)                          │
-│  Tests: Vitest + jsdom + RTL                                    │
+│  Styling: Tailwind CSS v4 via @tailwindcss/vite                 │
+│  Tokens:  index.css @theme — semantic colors (light/dark)       │
+│  State:   Zustand (selection + space check + copy + pause/     │
+│           resume/cancel + verify toggle)                        │
+│  Tests:   Vitest + jsdom + RTL                                  │
 └─────────────────────────────┬──────────────────────────────────┘
                               │ Tauri IPC (invoke / events)
 ┌─────────────────────────────┴──────────────────────────────────┐
@@ -294,6 +297,16 @@ detection between files.
 **Purpose:** React UI following Feature-Sliced Design.
 
 **Current state:**
+- **Styling:** Tailwind CSS v4 integrated via `@tailwindcss/vite` plugin. All
+  components migrated from inline styles to utility classes. Design token system
+  defined in `src/index.css` using `@theme` — semantic color tokens
+  (`surface-0..3`, `border`, `text-primary/secondary/muted`, `accent`, `danger`,
+  `warning`, `info`) with light/dark variants toggled via `.dark` class on the
+  root element. Custom variant `dark` configured as `@custom-variant dark (&:is(.dark *))`.
+- **App header:** `App.tsx` renders a sticky top bar with the app logo
+  (from `/icons/icon.png`), app name "MusicSync", and a dark mode toggle
+  switch. Dark mode state persists via `localStorage.theme` and applies the
+  `.dark` CSS class to the root element for Tailwind's dark mode support.
 - **Entities layer:** TypeScript interfaces mirror all domain types.
   Notable: `CopyStatus` uses a tagged union (`{ Failed: string } | "Pending" | ...`
   to match Rust's `enum` with data in serde JSON. Includes `Cancelled` for
@@ -460,6 +473,8 @@ Engine reads the signal before each file / each verify chunk
 | `fs2` | 0.4 | Free disk space query | Cross-platform `available_space()` |
 | `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
 | `zustand` | ^5 | State management | ADR-005 |
+| `tailwindcss` | ^4.3 | Utility-first CSS | ADR-008 — design tokens via `@theme`, dark mode |
+| `@tailwindcss/vite` | ^4.0 | Vite integration | ADR-008 — native Vite plugin (no PostCSS config) |
 | `@tauri-apps/api` | ^2 | Tauri IPC bindings | Required by Tauri |
 | `@tauri-apps/plugin-dialog` | ^2 (npm) | Frontend folder picker | Pair with Rust `tauri-plugin-dialog` |
 | `tempfile` | 3 (dev) | Temp dirs in Rust tests | Rust standard for FS test fixtures |
