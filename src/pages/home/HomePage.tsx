@@ -27,6 +27,8 @@ export function HomePage() {
   const copyRunning = useAppStore((s) => s.copyRunning);
   const copyDone = useAppStore((s) => s.copyDone);
   const copyError = useAppStore((s) => s.copyError);
+  const verifyCopy = useAppStore((s) => s.verifyCopy);
+  const setVerifyCopy = useAppStore((s) => s.setVerifyCopy);
 
   const handleCompare = useCallback(
     async (source: string, dest: string, level: string) => {
@@ -69,7 +71,7 @@ export function HomePage() {
     copyUnlistenRef.current = unlisten;
 
     try {
-      await startCopy(sourceRoot, destRoot, selectedPaths);
+      await startCopy(sourceRoot, destRoot, selectedPaths, verifyCopy);
     } catch {
       // Error is handled in store (sets copyError)
     } finally {
@@ -78,7 +80,7 @@ export function HomePage() {
         copyUnlistenRef.current = null;
       }
     }
-  }, [result, sourceRoot, destRoot, selectedPaths, startCopy, storeOnCopyProgress]);
+  }, [result, sourceRoot, destRoot, selectedPaths, startCopy, storeOnCopyProgress, verifyCopy]);
 
   return (
     <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: 960, margin: "0 auto" }}>
@@ -155,7 +157,7 @@ export function HomePage() {
       {result && !copyRunning && !copyDone && (
         <>
           <ComparisonView result={result} />
-          <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
+          <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
             <button
               onClick={handleCopy}
               disabled={selectedPaths.length === 0}
@@ -172,6 +174,14 @@ export function HomePage() {
             >
               Copy selected ({selectedPaths.length} file{selectedPaths.length !== 1 ? "s" : ""})
             </button>
+            <label style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={verifyCopy}
+                onChange={(e) => setVerifyCopy(e.target.checked)}
+              />
+              Verify with checksum (BLAKE3)
+            </label>
           </div>
         </>
       )}

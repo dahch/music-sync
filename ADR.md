@@ -102,8 +102,7 @@ hash. Each has trade-offs between speed and certainty.
 ## ADR-004: Copy Strategy — Sequential Streaming Copy
 
 - **Date:** 2026-07-01
-- **Status:** Accepted (partially implemented — streaming copy done, atomic
-  writes and post-copy verification deferred)
+- **Status:** Superseded by ADR-007
 
 ### Decision
 
@@ -137,7 +136,7 @@ hash. Each has trade-offs between speed and certainty.
 ## ADR-005: Frontend State Management
 
 - **Date:** 2026-07-01
-- **Status:** Accepted (Zustand store implemented with selection + space check)
+- **Status:** Accepted (Zustand store implemented with selection + space check + copy state + verify toggle)
 
 ### Decision
 
@@ -182,3 +181,50 @@ suggesting the user switch their device to USB-MSC mode.
 - MTP-only devices (mostly Android phones/tablets) won't work with v1.
 - Possible future extension via `libmtp` (Linux/Windows only; macOS has no
   mature MTP support).
+
+---
+
+## ADR-007: Atomic Copy with Optional Verification
+
+- **Date:** 2026-07-02
+- **Status:** Accepted
+- **Supersedes:** ADR-004 (atomic writes and post-copy verification portions)
+
+### Context
+
+ADR-004 specified deferred atomic writes and post-copy verification. After
+implementing the copy engine, tests showed that direct-to-destination writes
+left partial files on interrupt. Since the target is USB mass-storage (DACs,
+portable devices), interrupted copies are a real risk (user unplugs mid-copy).
+Additionally, users may want to verify that copied audio files are bit-perfect.
+
+### Decision
+
+The copy engine (`CopyEngine::execute()`) now implements:
+
+1. **Atomic writes via `.tmp` + rename:** each file is first written to a
+   `.musicsync.tmp` sibling path, then atomically renamed to the final path
+   via `tokio::fs::rename`. On failure at any stage, the temp file is deleted.
+   If the process crashes during the write, orphaned `.tmp` files are cleaned
+   up at the next copy run via `cleanup_tmp_files()`.
+
+2. **Optional BLAKE3 verification:** each `CopyItem` carries a `verify: bool`
+   field (frontend toggle "Verify with checksum (BLAKE3)"). When true, the
+   source file is hashed during the streaming read (incremental BLAKE3), then
+   the temp file is re-hashed after all chunks are written. On hash mismatch,
+   the temp file is deleted and the item is marked `Failed`.
+
+3. **Sequential (not parallel) copy retained:** files are still copied one at
+   a time toward the same destination. The DAC/USB write bottleneck makes
+   parallelism counterproductive for this use case.
+
+### Consequences
+
++ Partial files no longer appear on the destination after interrupted copies
+  (the temp file is removed on abort or cleaned up on next run).
++ Users can enable BLAKE3 verification per copy run, at the cost of re-reading
+  each copied file (roughly 2x I/O).
++ `blake3` crate added as a dependency (lightweight, no C dependencies).
++ Copy engine tests expanded from 17 to 37 to cover atomic path, verification,
+  and orphan cleanup.
++ Verification is opt-in — no overhead for users who don't need it.

@@ -71,6 +71,7 @@ export async function listHistory(
 
 export interface CopyFileItem {
   relativePath: string;
+  verify?: boolean;
 }
 
 export async function copyFiles(

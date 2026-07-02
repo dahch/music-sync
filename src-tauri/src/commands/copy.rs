@@ -1,5 +1,5 @@
 use music_sync_copy_engine::{CopyEngine, CopyItem, CopyItemResult, CopyProgress};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 /// Core copy logic extracted for testing without Tauri runtime.
@@ -29,6 +29,13 @@ pub async fn copy_files_inner(
     Ok(results)
 }
 
+/// Clean up orphaned `.musicsync.tmp` files in a directory tree.
+/// Called at app startup to remove leftovers from interrupted copies.
+pub fn cleanup_tmp_files(root: &str) -> Result<(), String> {
+    music_sync_copy_engine::cleanup_tmp_files(Path::new(root))
+        .map_err(|e| format!("tmp cleanup failed: {}", e))
+}
+
 #[tauri::command]
 pub async fn copy_files(
     app: tauri::AppHandle,
@@ -39,6 +46,9 @@ pub async fn copy_files(
     if items.is_empty() {
         return Ok(Vec::new());
     }
+
+    // Clean up orphaned .tmp files from previous interrupted copies on this destination
+    let _ = cleanup_tmp_files(&destination_root);
 
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<CopyProgress>();

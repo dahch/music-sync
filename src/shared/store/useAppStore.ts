@@ -13,14 +13,16 @@ interface AppState {
   copyRunning: boolean;
   copyDone: boolean;
   copyError: string | null;
+  verifyCopy: boolean;
 
   toggleSelect: (path: string) => void;
   selectOnly: (paths: string[]) => void;
   deselectAll: () => void;
   fetchSpaceInfo: (destinationRoot: string, selectedAbsolutePaths: string[]) => Promise<void>;
-  startCopy: (sourceRoot: string, destinationRoot: string, relativePaths: string[]) => Promise<void>;
+  startCopy: (sourceRoot: string, destinationRoot: string, relativePaths: string[], verify: boolean) => Promise<void>;
   onCopyProgress: (progress: CopyProgress) => void;
   resetCopy: () => void;
+  setVerifyCopy: (v: boolean) => void;
 }
 
 function generateId(): string {
@@ -46,6 +48,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   copyRunning: false,
   copyDone: false,
   copyError: null,
+  verifyCopy: false,
 
   toggleSelect: (path: string) => {
     const { selectedPaths } = get();
@@ -74,11 +77,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  startCopy: async (sourceRoot: string, destinationRoot: string, relativePaths: string[]) => {
+  startCopy: async (sourceRoot: string, destinationRoot: string, relativePaths: string[], verify: boolean) => {
     set({ copyRunning: true, copyDone: false, copyProgress: null, copyResults: null, copyError: null });
 
     try {
-      const items = relativePaths.map((p) => ({ relativePath: p }));
+      const items = relativePaths.map((p) => ({ relativePath: p, verify }));
       const results = await copyFiles(sourceRoot, destinationRoot, items);
 
       const filesNew = results.filter((r) => r.status === "Done").length;
@@ -122,5 +125,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   resetCopy: () => {
     set({ copyProgress: null, copyResults: null, copyRunning: false, copyDone: false, copyError: null });
+  },
+
+  setVerifyCopy: (v: boolean) => {
+    set({ verifyCopy: v });
   },
 }));

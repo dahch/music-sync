@@ -25,6 +25,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data directory");
             std::fs::create_dir_all(&app_dir).expect("failed to create app data directory");
+
             let db_path = app_dir.join("musicsync.db");
             let db = HistoryDb::open_or_create(&db_path)
                 .expect("failed to open or create history database");

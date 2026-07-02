@@ -46,7 +46,7 @@
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐    │
 │  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│    │
 │  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │(streaming)│    │
-│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │ 17 tests │    │
+│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │ 37 tests │    │
 │  │ serde    │  │ CLI bin  │  │          │  │            │    │
 │  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘    │
 │       │                                                       │
@@ -55,7 +55,7 @@
 │                    │ history  │       │ Tauri commands   │   │
 │                    │ (rusqlite│       │ compare + space  │   │
 │                    │  bundled)│       │ + copy + history │   │
-│                    │ 22 tests │       │ 14 tests         │   │
+│                    │ 22 tests │       │ 17 tests         │   │
 │                    └──────────┘       └─────────────────┘    │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -165,7 +165,8 @@ preservation.
 
 ### 5. Copy Engine Crate (`music-sync-copy-engine`)
 
-**Status:** ✅ Implemented — sequential streaming copy with per-chunk progress.
+**Status:** ✅ Implemented — sequential streaming copy with per-chunk progress,
+atomic writes, and optional BLAKE3 verification.
 
 **Design patterns used:**
 - **Configurable struct:** `CopyEngine` holds `chunk_size` (default 1 MiB) and
@@ -175,32 +176,40 @@ preservation.
   destination — this matches the expected bottleneck (DAC/USB write speed).
   Failure of one file does not stop the queue.
 - **Chunked streaming:** each file is read in configurable-size chunks and
-  written immediately, avoiding loading entire files into memory.
+  written, avoiding loading entire files into memory.
+- **Atomic write via `.tmp` + rename:** each file is first written to a
+  `.musicsync.tmp` sibling path, then atomically renamed to the final path
+  via `tokio::fs::rename`. On failure, the temp file is cleaned up.
+- **Optional post-copy verification:** when `CopyItem.verify` is true, a
+  BLAKE3 hash of the source file is computed during the streaming read, then
+  the temp file is re-hashed after write and compared. On mismatch, the temp
+  file is deleted and the item is marked `Failed`.
+- **Orphan cleanup:** `cleanup_tmp_files(root)` recursively removes leftover
+  `.musicsync.tmp` files from interrupted copies. Called at Tauri command
+  startup before each copy run.
 - **Progress via channels:** `UnboundedSender<CopyProgress>` receives an event
   after each chunk and at file completion. The receiver can drop events if it
   falls behind.
 - **Error taxonomy:** `CopyError` with `SourceNotFound`, `PermissionDenied`,
-  `IoError` variants for precise user-facing messages.
+  `IoError`, `VerificationFailed`, `RenameFailed` variants for precise
+  user-facing messages.
 - **Path safety:** `is_safe_relative()` rejects paths containing `..`
   components before any I/O, preventing directory traversal.
 - **Auto-directory creation:** intermediate directories on the destination
   are created automatically via `tokio::fs::create_dir_all`.
 
 **Key decisions (ponytail markers):**
-- No atomic `.tmp` + rename pattern — ADR-004 specified it, but the current
-  implementation writes directly to the final path. `.tmp` atomicity is
-  deferrable because the engine is sequential (no partial state exposure) and
-  crash recovery is a future concern.
-- No post-copy verification — BLAKE3 re-hash after write is optional in
-  ADR-004 but not yet implemented.
 - No batch-level progress — per-file events are emitted; batch-level summary
   is left to the caller.
 
-**Test coverage:** 17 tests covering normal file copy, subfolder structure
-preservation, permission-denied on source and destination, missing source,
-empty queues, empty files, unsafe path rejection, chunk-level progress events,
-exact chunk multiples, odd remainder sizes, serialization roundtrip, and error
-display formatting.
+**Test coverage:** 37 tests covering normal file copy, atomic `.tmp` + rename
+(no temp left on success or failure), optional BLAKE3 verification, subfolder
+structure preservation, permission-denied on source and destination, missing
+source, empty queues, empty files, unsafe path rejection, chunk-level progress
+events, exact chunk multiples, odd remainder sizes, mixed verify/non-verify
+files, dropped receiver resilience, error display formatting, serialization
+roundtrip, `is_safe_relative` edge cases, `cleanup_tmp_files` orphan cleanup,
+and `tmp_path` utility correctness.
 
 ### 6. Tauri App Crate (`music-sync`)
 
@@ -221,8 +230,13 @@ display formatting.
     - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
     - Tested separately (6 tests).
   - `copy_files(source_root, destination_root, items)`:
+    - Cleans up orphaned `.musicsync.tmp` files from prior interrupted copies
+      on the destination via `cleanup_tmp_files()`.
     - Spawns a progress relay task (`copy:progress` + `copy:done` events),
-      then delegates to `CopyEngine::execute()` for sequential streaming copy.
+      then delegates to `CopyEngine::execute()` for atomic streaming copy
+      with optional BLAKE3 verification.
+    - Core logic extracted as `copy_files_inner()` for direct unit testing
+      without a Tauri runtime (3 tests).
     - Returns `Vec<CopyItemResult>` with per-file status.
   - `save_history_entry(entry)`:
     - Inserts a `SyncHistoryEntry` via `HistoryDb::insert_entry()`.
@@ -264,7 +278,8 @@ display formatting.
   `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, `fetchSpaceInfo`
   (calls `calculate_size_and_space`), plus copy state (`copyProgress`,
   `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`,
-  `onCopyProgress`, `resetCopy`). No counter.
+  `onCopyProgress`, `resetCopy`), and verification toggle (`verifyCopy`,
+  `setVerifyCopy`). No counter.
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
 - **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
   `@testing-library/jest-dom`.
@@ -354,6 +369,7 @@ Frontend receives results
 | `serde` / `serde_json` | 1 | Serialization | Tauri IPC requires serde |
 | `tokio` | 1 | Async runtime | Scanner I/O, copy engine, Tauri commands (sync feature) |
 | `rusqlite` | 0.31 | SQLite | Embedded DB (bundled) |
+| `blake3` | 1 | Content hashing | Post-copy verification (optional, per-item) |
 | `fs2` | 0.4 | Free disk space query | Cross-platform `available_space()` |
 | `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
 | `zustand` | ^5 | State management | ADR-005 |
@@ -375,5 +391,5 @@ Frontend receives results
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 22 tests, in-memory SQLite — insert, paginate, status update, edge cases |
 | Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`). Copy and history commands exercised via crate tests |
-| Copy Engine | `cargo test` (tokio) | 17 tests — streaming copy, error handling, chunk edge cases, serialization |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 31 (CopyProgressView) + 21 (HistoryView) + 11 (store) |
+| Copy Engine | `cargo test` (tokio) | 37 tests — atomic write, optional verification, error handling, chunk edge cases, orphan cleanup, serialization |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 39 (CopyProgressView) + 22 (HistoryView) + 24 (store) |

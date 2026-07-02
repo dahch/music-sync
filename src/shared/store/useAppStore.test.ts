@@ -100,3 +100,95 @@ describe("useAppStore — fetchSpaceInfo", () => {
     expect(useAppStore.getState().spaceLoading).toBe(false);
   });
 });
+
+describe("useAppStore — verifyCopy / setVerifyCopy", () => {
+  it("verifyCopy defaults to false", () => {
+    expect(useAppStore.getState().verifyCopy).toBe(false);
+  });
+
+  it("setVerifyCopy sets verifyCopy to true", () => {
+    useAppStore.getState().setVerifyCopy(true);
+    expect(useAppStore.getState().verifyCopy).toBe(true);
+  });
+
+  it("setVerifyCopy sets verifyCopy to false", () => {
+    useAppStore.getState().setVerifyCopy(true);
+    useAppStore.getState().setVerifyCopy(false);
+    expect(useAppStore.getState().verifyCopy).toBe(false);
+  });
+
+  it("verifyCopy is independent of other store state", () => {
+    useAppStore.getState().setVerifyCopy(true);
+    useAppStore.getState().deselectAll();
+    expect(useAppStore.getState().verifyCopy).toBe(true);
+  });
+});
+
+describe("useAppStore — resetCopy", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      copyProgress: { currentFile: "a.flac", bytesCopied: 500, totalFileSize: 1000, filesCompleted: 3, totalFiles: 5 },
+      copyResults: [{ relativePath: "a.flac", status: "Done" }],
+      copyRunning: true,
+      copyDone: true,
+      copyError: "some error",
+    });
+  });
+
+  it("clears copyProgress", () => {
+    useAppStore.getState().resetCopy();
+    expect(useAppStore.getState().copyProgress).toBeNull();
+  });
+
+  it("clears copyResults", () => {
+    useAppStore.getState().resetCopy();
+    expect(useAppStore.getState().copyResults).toBeNull();
+  });
+
+  it("sets copyRunning to false", () => {
+    useAppStore.getState().resetCopy();
+    expect(useAppStore.getState().copyRunning).toBe(false);
+  });
+
+  it("sets copyDone to false", () => {
+    useAppStore.getState().resetCopy();
+    expect(useAppStore.getState().copyDone).toBe(false);
+  });
+
+  it("clears copyError", () => {
+    useAppStore.getState().resetCopy();
+    expect(useAppStore.getState().copyError).toBeNull();
+  });
+
+  it("is idempotent when called twice", () => {
+    useAppStore.getState().resetCopy();
+    const afterFirst = { ...useAppStore.getState() };
+    useAppStore.getState().resetCopy();
+    const afterSecond = { ...useAppStore.getState() };
+    expect(afterSecond).toEqual(afterFirst);
+  });
+});
+
+describe("useAppStore — onCopyProgress", () => {
+  it("updates copyProgress in store", () => {
+    const progress = { currentFile: "song.flac", bytesCopied: 512, totalFileSize: 1024, filesCompleted: 1, totalFiles: 3 };
+    useAppStore.getState().onCopyProgress(progress);
+    expect(useAppStore.getState().copyProgress).toEqual(progress);
+  });
+
+  it("replaces previous progress", () => {
+    const first = { currentFile: "a.flac", bytesCopied: 256, totalFileSize: 1024, filesCompleted: 0, totalFiles: 2 };
+    const second = { currentFile: "b.flac", bytesCopied: 1024, totalFileSize: 1024, filesCompleted: 1, totalFiles: 2 };
+    useAppStore.getState().onCopyProgress(first);
+    useAppStore.getState().onCopyProgress(second);
+    expect(useAppStore.getState().copyProgress).toEqual(second);
+  });
+
+  it("does not affect other store fields", () => {
+    useAppStore.setState({ copyRunning: true });
+    const progress = { currentFile: "x.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 0, totalFiles: 1 };
+    useAppStore.getState().onCopyProgress(progress);
+    expect(useAppStore.getState().copyRunning).toBe(true);
+    expect(useAppStore.getState().copyDone).toBe(false);
+  });
+});

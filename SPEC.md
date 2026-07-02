@@ -96,26 +96,43 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 - `execute(source_root, destination_root, items, progress_tx)` — processes
   a list of `CopyItem`s sequentially toward the same destination. Async via
   `tokio::fs`.
-- Auto-creates intermediate directories on the destination.
-- Chunked I/O: reads source in configurable-size chunks, writes each chunk
-  to destination, emits `CopyProgress` after each chunk and at file
-  completion.
+- **Atomic writes:** each file is first written to a `.musicsync.tmp` sibling
+  path, then atomically renamed to the final path via `tokio::fs::rename`.
+  Intermediate directories on the destination are auto-created.
+- **Optional BLAKE3 verification:** when `CopyItem.verify` is true, the engine
+  hashes the source file during the streaming read, then re-hashes the temp
+  file after write and compares. On mismatch, the temp file is deleted and the
+  item is marked `Failed`.
+- Chunked I/O: reads source in configurable-size chunks (default 1 MiB),
+  writes each chunk to the temp file, emits `CopyProgress` after each chunk
+  and at file completion.
 - Error taxonomy: `CopyError` enum with `SourceNotFound`, `PermissionDenied`,
-  `IoError` variants — each maps to a distinct user-facing message.
-- `is_safe_relative(path)` guard: rejects paths containing `..` components.
+  `IoError`, `VerificationFailed`, `RenameFailed` variants — each maps to a
+  distinct user-facing message.
+- `is_safe_relative(path)` guard: rejects paths containing `..` components
+  before any I/O, preventing directory traversal.
 - Failure of one item does not stop the queue — failed items are marked
   `Failed(reason)` and the engine continues.
+- `cleanup_tmp_files(root)` — recursively removes orphaned `.musicsync.tmp`
+  files under a root directory. Called at Tauri command startup to clean
+  leftovers from interrupted copies.
 - `CopyProgress { currentFile, bytesCopied, totalFileSize, filesCompleted, totalFiles }`
   — emitted per chunk and at completion of each file.
-- **Not implemented** (from ADR-004): atomic `.tmp` + rename pattern,
-  post-copy verification, batch-level progress.
+- **Not implemented:** batch-level progress — per-file events are emitted;
+  batch-level summary is left to the caller.
 - Tauri command `copy_files(source_root, destination_root, items)` wraps the
-  engine and relays `copy:progress` / `copy:done` events to the frontend.
+  engine and relays `copy:progress` / `copy:done` events to the frontend. The
+  command has a testable inner function `copy_files_inner()` extracted for
+  unit tests without a Tauri runtime.
 
-**Test coverage:** 17 tests covering normal copies, subfolder preservation,
-permission errors, missing sources, empty queues, empty files, unsafe path
-rejection, per-chunk progress, exact chunk multiples, odd remainder sizes,
-error display formatting, and serialization roundtrip.
+**Test coverage:** 37 tests covering normal file copy, atomic `.tmp` + rename
+(no temp file left on success or failure), optional BLAKE3 verification,
+subfolder structure preservation, permission-denied on source and destination,
+missing source, empty queues, empty files, unsafe path rejection, chunk-level
+progress events, exact chunk multiples, odd remainder sizes, mixed verify/non-
+verify files, dropped receiver resilience, error display formatting,
+serialization roundtrip, `is_safe_relative` edge cases, and `cleanup_tmp_files`
+orphan cleanup.
 
 ### 5. Frontend (`src/`)
 
@@ -148,11 +165,12 @@ error display formatting, and serialization roundtrip.
   - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — invokes Tauri `calculate_size_and_space`.
   - `saveHistoryEntry(entry)` — invokes Tauri `save_history_entry`.
   - `listHistory(page, pageSize)` — invokes Tauri `list_history`.
-  - `copyFiles(sourceRoot, destinationRoot, items)` — invokes Tauri `copy_files`.
+  - `copyFiles(sourceRoot, destinationRoot, items)` — `items` is `CopyFileItem[]`
+    (with `relativePath: string` and `verify?: boolean`). Invokes Tauri `copy_files`.
   - `onCopyProgress(callback)` — subscribes to `copy:progress` events.
   - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
     `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
-- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), copy state (`copyProgress`, `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`, `onCopyProgress`, `resetCopy`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
+- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), copy state (`copyProgress`, `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`, `onCopyProgress`, `resetCopy`), verification toggle (`verifyCopy`, `setVerifyCopy`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
 - **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
 ### 6. Tauri Integration (`src-tauri/src/`)
@@ -174,9 +192,12 @@ error display formatting, and serialization roundtrip.
     - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
     - Tested directly (6 unit tests).
   - `copy_files(source_root, destination_root, items)`:
-    - Relays `copy:progress` / `copy:done` events while delegating to
-      `CopyEngine::execute()` for sequential streaming copy.
-    - No unit tests yet (exercised via copy_engine crate tests).
+    - Cleans up orphaned `.musicsync.tmp` files from prior interrupted copies
+      on the destination, then relays `copy:progress` / `copy:done` events
+      while delegating to `CopyEngine::execute()` for atomic streaming copy
+      with optional BLAKE3 verification.
+    - Extracts core logic into `copy_files_inner()` for direct unit testing
+      (3 tests: empty items, single file, multiple files, missing source).
   - `save_history_entry(entry)`:
     - Inserts a sync history record into SQLite.
     - Uses `State<HistoryDb>` injected at app setup.
@@ -191,9 +212,9 @@ error display formatting, and serialization roundtrip.
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 22 (history) + 17 (copy_engine) + 14 (commands) = passes |
-| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 31 (CopyProgressView) + 21 (HistoryView) + 11 (store) — Vitest + jsdom |
+| Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 22 (history) + 37 (copy_engine) + 17 (commands: 8 parse + 6 space + 3 copy) = passes |
+| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 39 (CopyProgressView) + 22 (HistoryView) + 24 (store) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
-| CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |
+| CI | Builds on 3 targets (macOS ARM, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |
 | Memory | Not profiled yet |
