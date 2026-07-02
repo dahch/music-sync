@@ -1853,6 +1853,8 @@ version = "0.1.0"
 dependencies = [
  "music-sync-domain",
  "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
