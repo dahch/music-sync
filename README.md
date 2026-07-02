@@ -15,12 +15,12 @@ src-tauri/
 │   ├── domain/          # Domain types (MusicFile, ComparisonEntry, SyncProfile...)   ✅
 │   ├── scanner/         # Filesystem scanner — tokio async I/O, progress, validation  ✅
 │   ├── comparator/      # Diff logic (ADR-002: 3-level) — L1+L2 ✅, L3 pending        🚧
-│   ├── copy_engine/     # Copy queue + progress (ADR-004: atomic writes) — scaffold   🔧
+│   ├── copy_engine/     # Copy queue + progress — streaming copy, chunked I/O, error types ✅
 │   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
 ├── capabilities/        # Tauri v2: core + dialog + core:event:default permissions
 ├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
-├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅
+├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅, copy_files ✅
 ├── Cargo.toml           # Rust workspace root
 └── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 

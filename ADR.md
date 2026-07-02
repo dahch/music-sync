@@ -99,28 +99,38 @@ hash. Each has trade-offs between speed and certainty.
 
 ---
 
-## ADR-004: Atomic Copy Strategy
+## ADR-004: Copy Strategy — Sequential Streaming Copy
 
 - **Date:** 2026-07-01
-- **Status:** Accepted (not yet implemented — copy-engine is scaffold)
+- **Status:** Accepted (partially implemented — streaming copy done, atomic
+  writes and post-copy verification deferred)
 
 ### Decision
 
-- Streaming copy in configurable chunks (default 1 MB), with a wrapper around
-  `tokio::fs::copy` for per-file and per-batch progress.
-- Sequential copy per destination disk to avoid saturating slow USB/DAC write
-  speeds.
-- Post-copy verification (BLAKE3 checksum) optional, off by default.
-- **Atomic writes:** copy to `<dest>/<path>.musicsync.tmp` first, then atomic
-  `rename` to final name only on success (and optional verification pass). This
-  prevents visible partial/corrupt files if the device is disconnected mid-copy.
-- Space check before starting: total plan size vs free space on destination.
+- **Sequential streaming copy** (v1 implementation): chunked I/O via
+  `tokio::io` (default 1 MiB chunks) with per-chunk progress events.
+- One file at a time toward the same destination — matches the expected
+  DAC/USB write bottleneck.
+- `CopyEngine` owns the copy loop; the Tauri command `copy_files` relays
+  `copy:progress` / `copy:done` events.
+- **Post-copy verification** (BLAKE3 checksum) — deferred. Not implemented.
+- **Atomic writes** (`.tmp` + rename) — deferred. Current implementation
+  writes directly to the final path.
+- **Space check before copy** — handled separately via `calculate_size_and_space`
+  on the frontend side before invoking `copy_files`.
+- **Failure isolation** — one failed file does not abort the queue.
+- **Path safety** — `is_safe_relative()` rejects paths with `..` components
+  at the application level before any I/O.
 
 ### Consequences
 
-- `.musicsync.tmp` cleanup on startup handles crash recovery.
-- Sequential copy is slower for multiple fast disks but matches the expected
-  bottleneck (DAC USB write speed).
+- Direct write (no `.tmp` + rename) means partial files can remain after an
+  interrupt, but the next scan+compare run will detect them.
+- No background temp cleanup needed (no `.musicsync.tmp` files to track).
+- Sequential copy matches DAC/USB bottleneck; fast-media users incur no
+  penalty because USB write speed dominates.
+- Atomic writes and verification can be added as internal implementation
+  changes to `CopyEngine` without API changes.
 
 ---
 

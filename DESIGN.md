@@ -13,20 +13,21 @@
 │  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
 │  │  features/ folder-selection ✅, comparison-view ✅,      │  │
 │  │           scanner/comparator/copy-engine/history — stubs  │  │
-│  │  shared/  api (scanAndCompare), store (counter),          │  │
-│  │           lib/ui — empty stubs                            │  │
+│  │  shared/  api (scanAndCompare + calculateSizeAndSpace),  │  │
+│  │           store (selection + space check), lib/ui — stubs  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  Package: music-sync (pnpm)  ·  Vite dev on :1420               │
-│  State: Zustand (counter)  ·  Tests: Vitest + jsdom + RTL      │
+│  State: Zustand (selection + space check)  ·                    │
+│  Tests: Vitest + jsdom + RTL                                    │
 └─────────────────────────────┬──────────────────────────────────┘
                               │ Tauri IPC (invoke / events)
 ┌─────────────────────────────┴──────────────────────────────────┐
 │                    Tauri Rust Backend                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  src-tauri/                                              │  │
-│  │  ├── src/lib.rs      Tauri builder + 2 commands          │  │
-│  │  ├── src/commands/   compare.rs + space.rs               │  │
+│  │  ├── src/lib.rs      Tauri builder + 3 commands          │  │
+│  │  ├── src/commands/   compare.rs + space.rs + copy.rs     │  │
 │  │  ├── src/main.rs     Platform entry point                │  │
 │  │  ├── capabilities/   core + dialog + core:event:default  │  │
 │  │  ├── migrations/     001_sync_tables.sql                 │  │
@@ -40,17 +41,17 @@
 │                                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐    │
 │  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│    │
-│  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │ (scaffold) │    │
-│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │            │    │
+│  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │(streaming)│    │
+│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │ 17 tests │    │
 │  │ serde    │  │ CLI bin  │  │          │  │            │    │
 │  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘    │
 │       │                                                       │
 │       └─────────────────┬───────────────────────────────────  │
-│                    ┌──────────┐       ┌─────────────────┐    │
-│                    │ history  │       │ Tauri commands  │    │
-│                    │ (rusqlite│       │ (compare.rs)    │    │
-│                    │  bundled)│       │ scan_and_compare│    │
-│                    │ 12 tests │       │ 7 tests         │    │
+│                    ┌──────────┐       ┌──────────────────┐   │
+│                    │ history  │       │ Tauri commands   │   │
+│                    │ (rusqlite│       │ compare + space  │   │
+│                    │  bundled)│       │ + copy           │   │
+│                    │ 12 tests │       │ 14 tests         │   │
 │                    └──────────┘       └─────────────────┘    │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -145,7 +146,42 @@ preservation.
 
 ### 5. Copy Engine Crate (`music-sync-copy-engine`)
 
-**Status:** Scaffold. No copy logic yet.
+**Status:** ✅ Implemented — sequential streaming copy with per-chunk progress.
+
+**Design patterns used:**
+- **Configurable struct:** `CopyEngine` holds `chunk_size` (default 1 MiB) and
+  exposes `with_chunk_size()` for custom values. `Default` impl returns the
+  standard engine.
+- **Sequential I/O:** files are processed one at a time toward the same
+  destination — this matches the expected bottleneck (DAC/USB write speed).
+  Failure of one file does not stop the queue.
+- **Chunked streaming:** each file is read in configurable-size chunks and
+  written immediately, avoiding loading entire files into memory.
+- **Progress via channels:** `UnboundedSender<CopyProgress>` receives an event
+  after each chunk and at file completion. The receiver can drop events if it
+  falls behind.
+- **Error taxonomy:** `CopyError` with `SourceNotFound`, `PermissionDenied`,
+  `IoError` variants for precise user-facing messages.
+- **Path safety:** `is_safe_relative()` rejects paths containing `..`
+  components before any I/O, preventing directory traversal.
+- **Auto-directory creation:** intermediate directories on the destination
+  are created automatically via `tokio::fs::create_dir_all`.
+
+**Key decisions (ponytail markers):**
+- No atomic `.tmp` + rename pattern — ADR-004 specified it, but the current
+  implementation writes directly to the final path. `.tmp` atomicity is
+  deferrable because the engine is sequential (no partial state exposure) and
+  crash recovery is a future concern.
+- No post-copy verification — BLAKE3 re-hash after write is optional in
+  ADR-004 but not yet implemented.
+- No batch-level progress — per-file events are emitted; batch-level summary
+  is left to the caller.
+
+**Test coverage:** 17 tests covering normal file copy, subfolder structure
+preservation, permission-denied on source and destination, missing source,
+empty queues, empty files, unsafe path rejection, chunk-level progress events,
+exact chunk multiples, odd remainder sizes, serialization roundtrip, and error
+display formatting.
 
 ### 6. Tauri App Crate (`music-sync`)
 
@@ -153,16 +189,20 @@ preservation.
 
 **Current state:**
 - Registers `tauri-plugin-dialog` for native file dialogs.
-- Exposes two commands in a `commands` module:
+- Exposes three commands in a `commands` module:
   - `scan_and_compare(source_path, dest_path, level)`:
     - Validates both paths, runs concurrent `scan_pair()` with progress events
       (`scan:progress` + `scan:done`), then compares and returns `ComparisonResult`.
-    - `parse_comparison_level()` helper tested separately (7 tests).
+    - `parse_comparison_level()` helper tested separately (8 tests).
   - `calculate_size_and_space(destination_root, selected_paths)`:
     - Computes total size of selected files and queries free space on
       destination via `fs2::available_space`.
     - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
     - Tested separately (6 tests).
+  - `copy_files(source_root, destination_root, items)`:
+    - Spawns a progress relay task (`copy:progress` + `copy:done` events),
+      then delegates to `CopyEngine::execute()` for sequential streaming copy.
+    - Returns `Vec<CopyItemResult>` with per-file status.
 - Window title set at runtime: "MusicSync".
 - Capability `default.json` grants `core:default`, `dialog:default`,
   `core:event:default` (needed for frontend progress event subscription).
@@ -244,6 +284,30 @@ Cascading diff per ADR-002 (L1 → L2)
 Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 ```
 
+### Copy Flow (implemented — Tauri command `copy_files`)
+
+```
+Frontend: copyFiles(sourceRoot, destinationRoot, items)
+    ↓ Tauri invoke
+commands::copy_files()
+    ↓
+Spawning progress relay task → listens for CopyProgress, emits "copy:progress"
+    ↓
+CopyEngine::execute()                   ← sequential, per-item loop
+    ├── is_safe_relative(item.path)?    ← rejects ".." without I/O
+    ├── create_dir_all(dst.parent())    ← auto-create subdirectories
+    ├── open source file                ← tokio::fs::File::open
+    ├── create destination file         ← tokio::fs::File::create
+    ├── chunked read/write loop         ← default 1 MiB chunks
+    │   └── after each chunk:           ← progress_tx.send(CopyProgress { bytesCopied, ... })
+    ├── on success → CopyStatus::Done
+    └── on error → CopyStatus::Failed(reason)  ← continues to next item
+    ↓
+Vec<CopyItemResult> (per-file status)
+    ↓ Tauri return
+Frontend receives results
+```
+
 ## External Dependencies
 
 | Dependency | Version | Purpose | Why this one |
@@ -251,7 +315,7 @@ Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 | `tauri` | 2 | App framework | ADR-001 |
 | `tauri-plugin-dialog` | 2 | Native file dialogs (Rust + npm) | OS-native picker |
 | `serde` / `serde_json` | 1 | Serialization | Tauri IPC requires serde |
-| `tokio` | 1 | Async runtime | Scanner I/O concurrency |
+| `tokio` | 1 | Async runtime | Scanner I/O, copy engine, Tauri commands (sync feature) |
 | `rusqlite` | 0.31 | SQLite | Embedded DB (bundled) |
 | `fs2` | 0.4 | Free disk space query | Cross-platform `available_space()` |
 | `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
@@ -273,6 +337,6 @@ Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 12 tests, in-memory SQLite |
-| Tauri commands | `cargo test` | 13 tests — 7 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) |
-| Copy Engine | — | None yet |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) |
+| Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) |
+| Copy Engine | `cargo test` (tokio) | 17 tests — streaming copy, error handling, chunk edge cases, serialization |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 11 (store) |
