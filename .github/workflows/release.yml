@@ -74,16 +74,27 @@ jobs:
           merge-multiple: true
           path: bundles
 
+      - name: Clean bundles (keep only installers)
+        run: |
+          find bundles -type f \
+            ! -name "*.dmg" \
+            ! -name "*.exe" \
+            ! -name "*.msi" \
+            ! -name "*.deb" \
+            ! -name "*.rpm" \
+            ! -name "*.AppImage" \
+            -delete
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "MusicSync ${{ github.ref_name }}"
           draft: true
           files: |
-            bundles/**/MusicSync_*.dmg
-            bundles/**/MusicSync_*.exe
-            bundles/**/MusicSync_*.msi
-            bundles/**/MusicSync_*.deb
-            bundles/**/MusicSync_*.rpm
-            bundles/**/MusicSync_*.AppImage
+            bundles/**/*.dmg
+            bundles/**/*.exe
+            bundles/**/*.msi
+            bundles/**/*.deb
+            bundles/**/*.rpm
+            bundles/**/*.AppImage
           fail_on_unmatched_files: false
