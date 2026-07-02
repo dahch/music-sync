@@ -1,1 +1,1 @@
-export { ComparisonView, ComparisonSummary, ComparisonList } from "./ComparisonView";
+export { ComparisonView, ComparisonSummary, ComparisonList, SelectionPanel } from "./ComparisonView";
