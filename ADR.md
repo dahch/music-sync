@@ -225,6 +225,7 @@ The copy engine (`CopyEngine::execute()`) now implements:
 + Users can enable BLAKE3 verification per copy run, at the cost of re-reading
   each copied file (roughly 2x I/O).
 + `blake3` crate added as a dependency (lightweight, no C dependencies).
-+ Copy engine tests expanded from 17 to 37 to cover atomic path, verification,
-  and orphan cleanup.
++ Copy engine tests expanded from 17 to 70 to cover atomic path, verification,
+  orphan cleanup, pause/resume/cancel, pre-flight space check, and
+  mount/unmounted detection.
 + Verification is opt-in — no overhead for users who don't need it.

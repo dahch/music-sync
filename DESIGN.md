@@ -33,7 +33,7 @@
 │                    Tauri Rust Backend                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  src-tauri/                                              │  │
-│  │  ├── src/lib.rs      Tauri builder + 7 commands          │  │
+│  │  ├── src/lib.rs      Tauri builder + 8 commands          │  │
 │  │  ├── src/commands/   compare.rs + space.rs + copy.rs (+ pause_copy, resume_copy, cancel_copy) + history.rs     │  │
 │  │  ├── src/main.rs     Platform entry point                │  │
 │  │  ├── capabilities/   core + dialog + core:event:default  │  │
@@ -49,7 +49,7 @@
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐    │
 │  │  domain  │  │ scanner  │  │comparator│  │ copy_engine│    │
 │  │ (base)   │  │ (tokio)  │  │(L1+L2)   │  │(streaming)│    │
-│  │ 9 types  │  │ 15 tests │  │ 30 tests │  │ 37 tests │    │
+│  │ 9 types  │  │ 32 tests │  │ 30 tests │  │ 70 tests │    │
 │  │ serde    │  │ CLI bin  │  │          │  │            │    │
 │  └────┬─────┘  └──────────┘  └──────────┘  └────────────┘    │
 │       │                                                       │
@@ -58,7 +58,7 @@
 │                    │ history  │       │ Tauri commands   │   │
 │                    │ (rusqlite│       │ compare + space  │   │
 │                    │  bundled)│       │ + copy + history │   │
-│                    │ 22 tests │       │ 17 tests         │   │
+│                    │ 22 tests │       │ 18 tests         │   │
 │                    └──────────┘       └─────────────────┘    │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -66,6 +66,9 @@
 ## Layer Breakdown
 
 ### 1. Domain Crate (`music-sync-domain`)
+
+**Test coverage:** 40 tests — 35 in lib.rs (serde roundtrip + business logic)
++ 5 in mount.rs (path accessibility checks).
 
 **Purpose:** Shared type definitions used by all other crates and the Tauri
 IPC layer. No runtime dependencies beyond `serde`.
@@ -179,6 +182,14 @@ atomic writes, and optional BLAKE3 verification.
   destination — this matches the expected bottleneck (DAC/USB write speed).
   Failure of one file does not stop the queue. Cancel mid-queue marks
   remaining items as `Cancelled`; cancel mid-write cleans up the `.tmp` file.
+- **Pre-flight space check:** before any I/O, the engine computes total source
+  bytes via `tokio::task::spawn_blocking` and queries `fs2::available_space`
+  on the destination. If insufficient space, all items are immediately marked
+  `Failed("insufficient space on destination")` without touching disk.
+- **Mount check between files:** after each file, the engine checks
+  `mount::is_path_mounted(destination_root)`. If the volume was unmounted, the
+  remaining items are marked `Failed` with an unmount message and the engine
+  sets `handle.set_unmounted()` for upstream event relay.
 - **Chunked streaming:** each file is read in configurable-size chunks and
   written, avoiding loading entire files into memory.
 - **Atomic write via `.tmp` + rename:** each file is first written to a
@@ -214,7 +225,7 @@ atomic writes, and optional BLAKE3 verification.
 - No batch-level progress — per-file events are emitted; batch-level summary
   is left to the caller.
 
-**Test coverage:** 48 tests covering normal file copy, atomic `.tmp` + rename
+**Test coverage:** 70 tests covering normal file copy, atomic `.tmp` + rename
 (no temp left on success or failure), optional BLAKE3 verification, subfolder
 structure preservation, permission-denied on source and destination, missing
 source, empty queues, empty files, unsafe path rejection, chunk-level progress
@@ -222,8 +233,10 @@ events, exact chunk multiples, odd remainder sizes, mixed verify/non-verify
 files, dropped receiver resilience, error display formatting, serialization
 roundtrip, `is_safe_relative` edge cases, `cleanup_tmp_files` orphan cleanup,
 `tmp_path` utility correctness, pause/resume behavior (blocking between files,
-no re-copy on resume), cancel during file/verify phases with tmp cleanup, and
-corruption detection via hash mismatch.
+no re-copy on resume, paused file count reporting), cancel during file/verify
+phases with tmp cleanup, corruption detection via hash mismatch, pre-flight
+space check (insufficient space vs enough space), and mount/unmounted
+detection between files.
 
 ### 6. Tauri App Crate (`music-sync`)
 
@@ -233,10 +246,12 @@ corruption detection via hash mismatch.
 - Registers `tauri-plugin-dialog` for native file dialogs.
 - SQLite database initialized at app setup: `HistoryDb::open_or_create()` in
   the platform app data directory, injected via `app.manage(db)`.
-- Exposes seven commands in a `commands` module:
+- Exposes eight commands in a `commands` module:
   - `scan_and_compare(source_path, dest_path, level)`:
-    - Validates both paths, runs concurrent `scan_pair()` with progress events
-      (`scan:progress` + `scan:done`), then compares and returns `ComparisonResult`.
+    - Validates both paths, checks destination volume is still mounted via
+      `mount::is_path_mounted()`, runs concurrent `scan_pair()` with progress
+      events (`scan:progress` + `scan:done`), then compares and returns
+      `ComparisonResult`.
     - `parse_comparison_level()` helper tested separately (8 tests).
   - `calculate_size_and_space(destination_root, selected_paths)`:
     - Computes total size of selected files and queries free space on
@@ -244,6 +259,8 @@ corruption detection via hash mismatch.
     - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
     - Tested separately (6 tests).
   - `copy_files(source_root, destination_root, items)`:
+    - Checks destination volume is accessible via `mount::is_path_mounted()`
+      before starting any I/O; returns an error if the volume was unmounted.
     - Cleans up orphaned `.musicsync.tmp` files from prior interrupted copies
       on the destination via `cleanup_tmp_files()`.
     - Creates a `CopyHandle`/`CopyController` pair and stores the controller
@@ -251,7 +268,10 @@ corruption detection via hash mismatch.
       cancel access from other commands.
     - Spawns a progress relay task (`copy:progress` + `copy:done` events),
       then delegates to `CopyEngine::execute()` for atomic streaming copy
-      with optional BLAKE3 verification and cancel signal checks.
+      with optional BLAKE3 verification, pre-flight space check, cancel signal
+      checks, mount check between files, and unmount detection.
+    - On completion, emits `volume:unmounted` event if any item failed due
+      to the destination being disconnected mid-copy.
     - Core logic extracted as `copy_files_inner()` for direct unit testing
       without a Tauri runtime (4 tests).
     - Returns `Vec<CopyItemResult>` with per-file status.
@@ -289,6 +309,8 @@ corruption detection via hash mismatch.
   - `onCopyProgress(callback)` — subscribes to `copy:progress` Tauri events.
   - `pauseCopy()` / `resumeCopy()` / `cancelCopy()` — wraps `invoke("pause_copy")`,
     `invoke("resume_copy")`, `invoke("cancel_copy")` for flow control.
+  - `onVolumeUnmounted(callback)` — subscribes to `volume:unmounted` Tauri event
+    (fired when the destination volume is disconnected mid-copy).
   - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
     `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
 - **Features:** `folder-selection` (native folder picker + comparison level selector,
@@ -311,7 +333,8 @@ corruption detection via hash mismatch.
   `copyResults`, `copyRunning`, `copyPaused`, `copyDone`, `copyError`, `startCopy`,
   `onCopyProgress`, `resetCopy`), flow control (`pause`, `resume`, `cancel`),
   and verification toggle (`verifyCopy`, `setVerifyCopy`). Copy completion
-  auto-saves a `SyncHistoryEntry` (best-effort). No counter.
+  auto-saves a `SyncHistoryEntry` (best-effort). `countFailed()` helper tracks
+  results that are not Done/Skipped/Cancelled for status reporting. No counter.
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
 - **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
   `@testing-library/jest-dom`.
@@ -328,6 +351,8 @@ commands::scan_and_compare()
 parse_comparison_level(level)       ← validates "Fast"|"Metadata"|"Strict"
     ↓
 Scanner::validate() (both paths)    ← checks paths exist + are readable dirs
+    ↓
+mount::is_path_mounted(dest)        ← verifies destination volume is accessible
     ↓
 scan_pair(source, dest)             ← tokio::try_join! two async walks
     ↓ (for each file, from both scans)
@@ -375,14 +400,22 @@ Frontend: copyFiles(sourceRoot, destinationRoot, items)
     ↓ Tauri invoke
 commands::copy_files()
     ↓
+mount::is_path_mounted(dest)        ← returns error if volume was unmounted
+    ↓
+cleanup_tmp_files(dest)             ← remove orphan .musicsync.tmp from prior runs
+    ↓
 Create CopyHandle/CopyController pair
 Store controller in global OnceLock for pause/resume/cancel access
     ↓
 Spawning progress relay task → listens for CopyProgress, emits "copy:progress"
     ↓
 CopyEngine::execute(..., handle)        ← sequential, per-item loop
+    ├── Pre-flight space check        ← compute total bytes, check fs2::available_space
+    │   └── insufficient? → all items → Failed("insufficient space")
     ├── handle.is_cancelled()?          ← break if cancelled (remaining items → Cancelled)
     ├── handle.wait_if_paused()         ← block until resumed or cancelled
+    ├── mount::is_path_mounted(dest)?   ← check volume still accessible
+    │   └── unmounted? → handle.set_unmounted(); break (remaining → Failed/unmounted)
     ├── is_safe_relative(item.path)?    ← rejects ".." without I/O
     ├── create_dir_all(dst.parent())    ← auto-create subdirectories
     ├── open source file                ← tokio::fs::File::open
@@ -396,6 +429,8 @@ CopyEngine::execute(..., handle)        ← sequential, per-item loop
     │   └── on failure → clean up .tmp, emit CopyStatus::Failed
     ├── on success → CopyStatus::Done
     └── on error → CopyStatus::Failed(reason)  ← continues to next item
+    ↓
+Emit volume:unmounted if any item failed due to disconnection
     ↓
 Vec<CopyItemResult> (per-file status, includes Cancelled)
     ↓ Tauri return
@@ -438,10 +473,10 @@ Engine reads the signal before each file / each verify chunk
 
 | Layer | Tool | Tests |
 |-------|------|-------|
-| Domain logic | `cargo test` | 9 modules / 35 tests — serde roundtrip + business logic |
-| Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
+| Domain logic | `cargo test` | 40 tests — 35 in lib.rs (serde roundtrip + business logic) + 5 in mount.rs (path accessibility checks) |
+| Scanner | `cargo test` (tokio) | 32 tests, real temp dirs, 20k-file benchmark |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 22 tests, in-memory SQLite — insert, paginate, status update, edge cases |
 | Tauri commands | `cargo test` | 18 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) + 4 (copy `copy_files_inner`) |
-| Copy Engine | `cargo test` (tokio) | 48 tests — atomic write, optional verification, pause/resume/cancel, error handling, chunk edge cases, orphan cleanup, corruption detection, serde |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 24 (store) |
+| Copy Engine | `cargo test` (tokio) | 70 tests — atomic write, optional verification, pause/resume/cancel, error handling, chunk edge cases, orphan cleanup, corruption detection, serde, pre-flight space check, mount/unmounted detection |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 25 (store) |

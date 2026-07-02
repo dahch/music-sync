@@ -96,6 +96,14 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 - `execute(source_root, destination_root, items, progress_tx, handle)` —
   processes a list of `CopyItem`s sequentially toward the same destination.
   Async via `tokio::fs`. Accepts a `CopyHandle` for pause/resume/cancel control.
+- **Pre-flight space check:** before any I/O, the engine computes total source
+  bytes via `spawn_blocking` and queries `fs2::available_space` on the
+  destination. If insufficient space is found, all items are immediately
+  marked `Failed("insufficient space on destination")` without touching disk.
+- **Mount check between files:** after each file, the engine checks
+  `mount::is_path_mounted(destination_root)`. If the volume was unmounted, the
+  remaining items are marked `Failed` with an unmount message and the engine
+  sets `handle.set_unmounted()` for upstream event relay.
 - **Atomic writes:** each file is first written to a `.musicsync.tmp` sibling
   path, then atomically renamed to the final path via `tokio::fs::rename`.
   Intermediate directories on the destination are auto-created.
@@ -133,16 +141,18 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
   a Tauri runtime. Three additional commands `pause_copy`, `resume_copy`, and
   `cancel_copy` access the active controller via a global `OnceLock<Mutex<Option<CopyController>>>`.
 
-**Test coverage:** 48 tests covering normal file copy, atomic `.tmp` + rename
+**Test coverage:** 70 tests covering normal file copy, atomic `.tmp` + rename
 (no temp file left on success or failure), optional BLAKE3 verification,
 subfolder structure preservation, permission-denied on source and destination,
 missing source, empty queues, empty files, unsafe path rejection, chunk-level
 progress events, exact chunk multiples, odd remainder sizes, mixed verify/non-
 verify files, dropped receiver resilience, error display formatting,
 serialization roundtrip, `is_safe_relative` edge cases, `cleanup_tmp_files`
-orphan cleanup, pause/resume behavior (blocking between files, no re-copy on
-resume), cancel during file/verify phases with tmp cleanup, and corruption
-detection via hash mismatch.
+orphan cleanup, `tmp_path` utility correctness, pause/resume behavior
+(blocking between files, no re-copy on resume, paused file count reporting),
+cancel during file/verify phases with tmp cleanup, corruption detection via
+hash mismatch, pre-flight space check (insufficient space vs enough space),
+and mount/unmounted detection between files.
 
 ### 5. Frontend (`src/`)
 
@@ -185,9 +195,11 @@ detection via hash mismatch.
   - `onCopyProgress(callback)` — subscribes to `copy:progress` events.
   - `pauseCopy()` / `resumeCopy()` / `cancelCopy()` — invoke `pause_copy`,
     `resume_copy`, `cancel_copy` Tauri commands for flow control.
+  - `onVolumeUnmounted(callback)` — subscribes to `volume:unmounted` events
+    (fired when the destination volume is disconnected mid-copy).
   - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
     `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
-- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), copy state (`copyProgress`, `copyResults`, `copyRunning`, `copyPaused`, `copyDone`, `copyError`, `startCopy`, `onCopyProgress`, `resetCopy`), flow control (`pause`, `resume`, `cancel`), verification toggle (`verifyCopy`, `setVerifyCopy`), and selection actions (`toggleSelect`, `selectOnly`, `deselectAll`). Copy completion auto-saves a `SyncHistoryEntry` via `saveHistoryEntry` (best-effort). No counter.
+  - **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), copy state (`copyProgress`, `copyResults`, `copyRunning`, `copyPaused`, `copyDone`, `copyError`, `startCopy`, `onCopyProgress`, `resetCopy`), flow control (`pause`, `resume`, `cancel`), verification toggle (`verifyCopy`, `setVerifyCopy`), and selection actions (`toggleSelect`, `selectOnly`, `deselectAll`). Copy completion auto-saves a `SyncHistoryEntry` via `saveHistoryEntry` (best-effort). `countFailed()` helper tracks results that are not Done/Skipped/Cancelled for status reporting. No counter.
 - **Shared utility:** `src/shared/format-size.ts` — exports `formatSize(bytes)` for human-readable byte formatting, reused across features.
 - **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
@@ -198,9 +210,10 @@ detection via hash mismatch.
 - Tauri v2 app with dialog plugin registered.
 - SQLite database initialized at app startup in the platform app data directory
   (`HistoryDb::open_or_create`), managed via `app.manage(db)` for state injection.
-- Seven real commands:
+- Eight real commands:
   - `scan_and_compare(source_path, dest_path, level)`:
-    - Validates both paths, spawns concurrent source/dest scan via
+    - Validates both paths, checks destination volume is still mounted via
+      `mount::is_path_mounted()`, spawns concurrent source/dest scan via
       `tokio::try_join!`, streams `scan:progress` events to the frontend
       (then emits `scan:done`), then runs the comparator and returns `ComparisonResult`.
     - Helper `parse_comparison_level()` tested directly (8 unit tests).
@@ -224,6 +237,8 @@ detection via hash mismatch.
       `controller.pause()`, `.resume()`, or `.cancel()` respectively.
     - Cancel marks remaining items as `CopyStatus::Cancelled` and cleans up
       in-progress `.tmp` files.
+  - Also emits `volume:unmounted` event if any item failed because the
+    destination volume was disconnected during copy.
   - `save_history_entry(entry)`:
     - Inserts a sync history record into SQLite.
     - Uses `State<HistoryDb>` injected at app setup.
@@ -238,8 +253,8 @@ detection via hash mismatch.
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 22 (history) + 48 (copy_engine) + 18 (commands: 8 parse + 6 space + 4 copy) = passes |
-| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 24 (store) — Vitest + jsdom |
+| Rust test suite | 40 (domain) + 32 (scanner) + 30 (comparator) + 22 (history) + 70 (copy_engine) + 18 (commands: 8 parse + 6 space + 4 copy) = passes |
+| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 25 (store) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 3 targets (macOS ARM, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |
