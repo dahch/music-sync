@@ -8,6 +8,7 @@ music-sync-domain = { path = "../domain" }
 tokio = { version = "1", features = ["fs", "io-util", "sync"] }
 serde = { version = "1", features = ["derive"] }
 blake3 = "1"
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

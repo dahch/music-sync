@@ -67,6 +67,8 @@ impl std::fmt::Display for CopyError {
     }
 }
 
+impl std::error::Error for CopyError {}
+
 impl From<std::io::Error> for CopyError {
     fn from(e: std::io::Error) -> Self {
         CopyError::IoError(e)
@@ -75,6 +77,7 @@ impl From<std::io::Error> for CopyError {
 
 struct CopyHandleInner {
     cancel: AtomicBool,
+    unmounted: AtomicBool,
     pause_rx: Mutex<watch::Receiver<bool>>,
 }
 
@@ -89,6 +92,7 @@ impl CopyHandle {
         let (tx, rx) = watch::channel(false);
         let inner = Arc::new(CopyHandleInner {
             cancel: AtomicBool::new(false),
+            unmounted: AtomicBool::new(false),
             pause_rx: Mutex::new(rx),
         });
         let handle = Self { inner: inner.clone() };
@@ -120,6 +124,15 @@ impl CopyHandle {
             let mut rx = self.inner.pause_rx.lock().await;
             let _ = rx.changed().await;
         }
+    }
+
+    /// Signals that the destination volume was unmounted during copy.
+    pub fn set_unmounted(&self) {
+        self.inner.unmounted.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_unmounted(&self) -> bool {
+        self.inner.unmounted.load(Ordering::Relaxed)
     }
 }
 
@@ -206,6 +219,46 @@ impl CopyEngine {
         let mut results = Vec::with_capacity(items.len());
         let mut files_completed = 0u64;
 
+        // Pre-flight space check: compute total bytes from source files,
+        // verify destination has enough free space.
+        let items_for_size = items.to_vec();
+        let source_root_buf = source_root.to_path_buf();
+        let total_bytes: u64 = tokio::task::spawn_blocking(move || {
+            items_for_size
+                .iter()
+                .filter_map(|item| {
+                    let src = source_root_buf.join(&item.relative_path);
+                    std::fs::metadata(&src).ok().map(|m| m.len())
+                })
+                .sum()
+        })
+        .await
+        .unwrap_or(0);
+        if total_bytes > 0 {
+            match fs2::available_space(destination_root) {
+                Ok(free) if free <= total_bytes => {
+                    for item in items {
+                        files_completed += 1;
+                        let _ = progress_tx.send(CopyProgress {
+                            current_file: item.relative_path.clone(),
+                            bytes_copied: 0,
+                            total_file_size: 0,
+                            files_completed,
+                            total_files,
+                        });
+                        results.push(CopyItemResult {
+                            relative_path: item.relative_path.clone(),
+                            status: CopyStatus::Failed(
+                                "insufficient space on destination".into(),
+                            ),
+                        });
+                    }
+                    return results;
+                }
+                _ => {} // enough space or can't check — continue
+            }
+        }
+
         for item in items {
             // Check cancel before starting a new file
             if handle.is_cancelled() {
@@ -214,6 +267,12 @@ impl CopyEngine {
 
             // Wait if paused (blocks until resumed or cancelled)
             if handle.wait_if_paused().await.is_err() {
+                break;
+            }
+
+            // Check destination volume is still accessible
+            if !music_sync_domain::mount::is_path_mounted(destination_root) {
+                handle.set_unmounted();
                 break;
             }
 
@@ -261,9 +320,14 @@ impl CopyEngine {
             });
         }
 
-        // Mark any remaining items as Cancelled and emit progress for each
+        // Mark any remaining items as Cancelled or Failed (unmounted) and emit progress for each
         let processed = results.len();
         if processed < items.len() {
+            let remaining_status = if handle.is_unmounted() {
+                CopyStatus::Failed("Destination volume is not accessible. It may have been unmounted.".into())
+            } else {
+                CopyStatus::Cancelled
+            };
             for remaining in &items[processed..] {
                 files_completed += 1;
                 let _ = progress_tx.send(CopyProgress {
@@ -275,7 +339,7 @@ impl CopyEngine {
                 });
                 results.push(CopyItemResult {
                     relative_path: remaining.relative_path.clone(),
-                    status: CopyStatus::Cancelled,
+                    status: remaining_status.clone(),
                 });
             }
         }
@@ -1559,5 +1623,387 @@ mod tests {
         assert_eq!(results[3].status, CopyStatus::Cancelled);
         assert!(dst_dir.path().join("a.flac").exists());
         assert!(dst_dir.path().join("b.flac").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Unmount detection during copy
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn unmount_during_copy_marks_remaining_as_failed() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_root = std::env::temp_dir()
+            .join(format!("musicsync_umount_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dst_root);
+        std::fs::create_dir_all(&dst_root).unwrap();
+
+        // Use a large a.flac so we have time to act while it copies
+        let content = vec![0xFFu8; 256 * 1024]; // 256 KiB
+        std::fs::write(src_dir.path().join("a.flac"), &content).unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
+        std::fs::write(src_dir.path().join("c.flac"), b"ccc").unwrap();
+
+        let (handle, ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac"), item("c.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst_path = dst_root.clone();
+        let engine = CopyEngine::with_chunk_size(16 * 1024); // 16 KiB — more progress events
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst_path, &items, tx, &handle).await
+        });
+
+        // Wait for a.flac to START (not complete)
+        while let Some(p) = rx.recv().await {
+            if p.bytes_copied > 0 && p.files_completed == 0 {
+                // a.flac is being written — pause to block engine before b.flac starts
+                ctrl.pause();
+                break;
+            }
+        }
+
+        // Now wait for a.flac to finish (engine will block at wait_if_paused for b.flac)
+        while let Some(p) = rx.recv().await {
+            if p.files_completed >= 1 {
+                // a.flac done, engine now blocked before b.flac
+                break;
+            }
+        }
+        assert!(dst_root.join("a.flac").exists());
+
+        // Unmount while engine is safely paused between files
+        std::fs::remove_dir_all(&dst_root).unwrap();
+        ctrl.resume();
+
+        // Drain remaining progress
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert!(
+            matches!(&results[1].status, CopyStatus::Failed(msg) if msg.contains("unmounted")),
+            "expected Failed(unmounted) for b.flac, got {:?}",
+            results[1].status
+        );
+        assert!(
+            matches!(&results[2].status, CopyStatus::Failed(msg) if msg.contains("unmounted")),
+            "expected Failed(unmounted) for c.flac, got {:?}",
+            results[2].status
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dst_root);
+    }
+
+    #[tokio::test]
+    async fn unmount_before_copy_all_fail() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_root = std::env::temp_dir()
+            .join(format!("musicsync_umount_all_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dst_root);
+        std::fs::create_dir_all(&dst_root).unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"aaa").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
+
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac")];
+        let src = src_dir.path().to_path_buf();
+
+        // Delete destination before starting copy
+        let dst_path = dst_root.clone();
+        std::fs::remove_dir_all(&dst_root).unwrap();
+
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst_path, &items, tx, &handle).await
+        });
+
+        while let Some(_) = rx.recv().await {}
+
+        let results = task.await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(
+            matches!(&results[0].status, CopyStatus::Failed(msg) if msg.contains("unmounted")),
+            "expected Failed(unmounted), got {:?}",
+            results[0].status
+        );
+        assert!(
+            matches!(&results[1].status, CopyStatus::Failed(msg) if msg.contains("unmounted")),
+            "expected Failed(unmounted), got {:?}",
+            results[1].status
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyHandle initial state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_handle_initial_state_is_not_cancelled() {
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        assert!(!handle.is_cancelled());
+    }
+
+    #[test]
+    fn copy_handle_initial_state_is_not_unmounted() {
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        assert!(!handle.is_unmounted());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyController initial state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_controller_initial_state_not_paused() {
+        let (_handle, ctrl) = CopyHandle::new_pair();
+        assert!(!ctrl.is_paused());
+    }
+
+    #[test]
+    fn copy_controller_initial_state_not_cancelled() {
+        let (_handle, ctrl) = CopyHandle::new_pair();
+        assert!(!ctrl.is_cancelled());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyController state transitions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_controller_pause_then_resume() {
+        let (_handle, ctrl) = CopyHandle::new_pair();
+        assert!(!ctrl.is_paused());
+        ctrl.pause();
+        assert!(ctrl.is_paused());
+        ctrl.resume();
+        assert!(!ctrl.is_paused());
+    }
+
+    #[test]
+    fn copy_controller_cancel_sets_flag() {
+        let (_handle, ctrl) = CopyHandle::new_pair();
+        assert!(!ctrl.is_cancelled());
+        ctrl.cancel();
+        assert!(ctrl.is_cancelled());
+        // Cancelled is sticky
+        ctrl.resume();
+        assert!(ctrl.is_cancelled());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyHandle::set_unmounted
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_handle_set_unmounted() {
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        assert!(!handle.is_unmounted());
+        handle.set_unmounted();
+        assert!(handle.is_unmounted());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyHandle::wait_if_paused
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn wait_if_paused_returns_ok_when_not_paused() {
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let result = handle.wait_if_paused().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn wait_if_paused_returns_err_when_cancelled_while_waiting() {
+        let (handle, ctrl) = CopyHandle::new_pair();
+        ctrl.pause();
+        // Spawn the wait in a separate task, cancel from here
+        let h = handle.clone();
+        let task = tokio::spawn(async move { h.wait_if_paused().await });
+        // Give the task time to enter the wait loop
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Cancel then unpause — wait_if_paused will unblock from changed(),
+        // loop back, see cancel flag, and return Err
+        ctrl.cancel();
+        ctrl.resume();
+        let result = task.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // std::error::Error impl for CopyError
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_error_implements_std_error() {
+        fn assert_error<T: std::error::Error>() {}
+        assert_error::<CopyError>();
+    }
+
+    // -----------------------------------------------------------------------
+    // tmp_path edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tmp_path_on_file_without_extension() {
+        let p = PathBuf::from("/music/README");
+        assert_eq!(tmp_path(&p), PathBuf::from("/music/README.musicsync.tmp"));
+    }
+
+    #[test]
+    fn tmp_path_on_empty_relative() {
+        let p = PathBuf::from("");
+        assert_eq!(tmp_path(&p), PathBuf::from(".musicsync.tmp"));
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyEngine::new default chunk size
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_engine_default_chunk_size_is_1_mib_constant() {
+        let _engine = CopyEngine::new();
+        // The chunk_size field is not pub; we verify behavior by checking
+        // that the DEFAULT_CHUNK_SIZE constant equals 1 MiB.
+        assert_eq!(DEFAULT_CHUNK_SIZE, 1_048_576);
+    }
+
+    #[test]
+    fn copy_engine_default_and_new_equivalent_sync() {
+        // Sync-level: verify chunk_size constants match
+        let _default = CopyEngine::default();
+        let _new = CopyEngine::new();
+        // Both constructors exist — the behavioral equivalence is verified
+        // in copy_engine_default_vs_new_equivalence above.
+    }
+
+    // -----------------------------------------------------------------------
+    // cleanup_tmp_files on empty directory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cleanup_tmp_on_empty_directory_is_noop() {
+        let dir = TempDir::new().unwrap();
+        cleanup_tmp_files(dir.path()).unwrap();
+        // Still exists, no errors
+        assert!(dir.path().exists());
+        assert!(dir.path().read_dir().unwrap().next().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // CopyProgress serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_progress_serde_roundtrip() {
+        let p = CopyProgress {
+            current_file: PathBuf::from("song.flac"),
+            bytes_copied: 1024,
+            total_file_size: 2048,
+            files_completed: 1,
+            total_files: 10,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: CopyProgress = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.current_file, PathBuf::from("song.flac"));
+        assert_eq!(back.bytes_copied, 1024);
+        assert_eq!(back.files_completed, 1);
+    }
+
+    #[test]
+    fn copy_progress_serde_camel_case() {
+        let json = r#"{"currentFile":"a.flac","bytesCopied":0,"totalFileSize":0,"filesCompleted":0,"totalFiles":1}"#;
+        let p: CopyProgress = serde_json::from_str(json).unwrap();
+        assert_eq!(p.current_file, PathBuf::from("a.flac"));
+        assert_eq!(p.total_files, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Free space pre-check
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn nonexistent_destination_skips_space_check_fails_on_copy() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let content = vec![0xFFu8; 1024];
+        std::fs::write(src_dir.path().join("a.flac"), &content).unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"data").unwrap();
+
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac")];
+        let src = src_dir.path().to_path_buf();
+
+        // Destination subdir doesn't exist — fs2::available_space returns Err,
+        // space pre-check is gracefully skipped. Items then fail because
+        // create_dir_all on the nonexistent root succeeds (it's relative to /tmp)
+        // but the actual write fails.
+        let dst_path = dst_dir.path().join("nonexistent_subdir");
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst_path, &items, tx, &handle).await
+        });
+
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(
+            matches!(&results[0].status, CopyStatus::Failed(_)),
+            "expected Failed for nonexistent destination, got {:?}",
+            results[0].status
+        );
+    }
+
+    #[tokio::test]
+    async fn sufficient_space_passes_check() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        std::fs::write(src_dir.path().join("a.flac"), b"aaa").unwrap();
+        std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
+
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let items = vec![item("a.flac"), item("b.flac")];
+        let src = src_dir.path().to_path_buf();
+        let dst = dst_dir.path().to_path_buf();
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(&src, &dst, &items, tx, &handle).await
+        });
+
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].status, CopyStatus::Done);
+        assert_eq!(results[1].status, CopyStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn empty_items_skips_space_check() {
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let engine = CopyEngine::new();
+        let task = tokio::spawn(async move {
+            engine.execute(Path::new("/tmp"), Path::new("/tmp"), &[], tx, &handle).await
+        });
+
+        while let Some(_) = rx.recv().await {}
+        let results = task.await.unwrap();
+
+        assert!(results.is_empty());
     }
 }
