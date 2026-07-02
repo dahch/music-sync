@@ -7,3 +7,6 @@ edition.workspace = true
 music-sync-domain = { path = "../domain" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

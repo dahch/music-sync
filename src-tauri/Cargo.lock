@@ -1873,6 +1873,7 @@ dependencies = [
  "music-sync-domain",
  "rusqlite",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
