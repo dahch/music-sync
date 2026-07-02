@@ -54,6 +54,19 @@ export interface CopyTask {
   retries: number;
 }
 
+export interface CopyProgress {
+  currentFile: string;
+  bytesCopied: number;
+  totalFileSize: number;
+  filesCompleted: number;
+  totalFiles: number;
+}
+
+export interface CopyItemResult {
+  relativePath: string;
+  status: CopyStatus;
+}
+
 export interface SyncHistoryEntry {
   id: string;
   profileId: string | null;
