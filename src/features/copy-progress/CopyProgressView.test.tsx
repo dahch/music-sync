@@ -9,6 +9,7 @@ function resetStore() {
     copyProgress: null,
     copyResults: null,
     copyRunning: false,
+    copyPaused: false,
     copyDone: false,
   });
 }
@@ -63,6 +64,10 @@ describe("statusLabel", () => {
     expect(statusLabel("Verifying")).toBe("Verifying");
   });
 
+  it('returns "Cancelled" for Cancelled status', () => {
+    expect(statusLabel("Cancelled")).toBe("Cancelled");
+  });
+
   it('returns "Failed: <reason>" for Failed object status', () => {
     expect(statusLabel({ Failed: "disk full" })).toBe("Failed: disk full");
     expect(statusLabel({ Failed: "permission denied" })).toBe("Failed: permission denied");
@@ -89,6 +94,10 @@ describe("statusColor", () => {
 
   it('returns red for Failed object status', () => {
     expect(statusColor({ Failed: "error" })).toBe("#c62828");
+  });
+
+  it('returns orange for Cancelled status', () => {
+    expect(statusColor("Cancelled")).toBe("#e65100");
   });
 
   it('returns gray fallback for Skipped', () => {
@@ -351,5 +360,109 @@ describe("CopyProgressView", () => {
     });
     render(<CopyProgressView />);
     expect(screen.queryByText("Back to comparison")).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Error display
+  // ---------------------------------------------------------------------------
+
+  it("displays copy error banner when copyError is set", () => {
+    useAppStore.setState({
+      copyRunning: false,
+      copyDone: false,
+      copyError: "disk full",
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText(/Copy failed: disk full/)).toBeInTheDocument();
+  });
+
+  it("heading says 'Copy failed' when copyError is set", () => {
+    useAppStore.setState({
+      copyRunning: false,
+      copyDone: false,
+      copyError: "permission denied",
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Copy failed")).toBeInTheDocument();
+  });
+
+  it("heading says 'Copy failed' even when copyDone is also set (error wins)", () => {
+    useAppStore.setState({
+      copyRunning: false,
+      copyDone: true,
+      copyError: "out of space",
+      copyResults: [{ relativePath: "a.flac", status: "Done" }],
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Copy failed")).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pause / Resume
+  // ---------------------------------------------------------------------------
+
+  it("renders 'Paused' heading when copyPaused is true", () => {
+    useAppStore.setState({
+      copyRunning: true,
+      copyPaused: true,
+      copyProgress: { currentFile: "pause.flac", bytesCopied: 500, totalFileSize: 1000, filesCompleted: 1, totalFiles: 5 },
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+  });
+
+  it("shows pause button when running and not paused", () => {
+    useAppStore.setState({
+      copyRunning: true,
+      copyPaused: false,
+      copyProgress: { currentFile: "a.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 0, totalFiles: 5 },
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Pause")).toBeInTheDocument();
+    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
+  });
+
+  it("shows resume button when running and paused", () => {
+    useAppStore.setState({
+      copyRunning: true,
+      copyPaused: true,
+      copyProgress: { currentFile: "a.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 0, totalFiles: 5 },
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Resume")).toBeInTheDocument();
+    expect(screen.queryByText("Pause")).not.toBeInTheDocument();
+  });
+
+  it("shows cancel button in controls when running", () => {
+    useAppStore.setState({
+      copyRunning: true,
+      copyPaused: false,
+      copyProgress: { currentFile: "a.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 0, totalFiles: 5 },
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
+  });
+
+  it("hides all control buttons when copy is done", () => {
+    useAppStore.setState({
+      copyRunning: false,
+      copyDone: true,
+      copyResults: [{ relativePath: "a.flac", status: "Done" }],
+    });
+    render(<CopyProgressView />);
+    expect(screen.queryByText("Pause")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+  });
+
+  it("shows 'paused at <file>' detail when paused with progress", () => {
+    useAppStore.setState({
+      copyRunning: true,
+      copyPaused: true,
+      copyProgress: { currentFile: "artist/album/song.flac", bytesCopied: 2048, totalFileSize: 4096, filesCompleted: 2, totalFiles: 10 },
+    });
+    render(<CopyProgressView />);
+    expect(screen.getByText(/paused at/)).toBeInTheDocument();
+    expect(screen.getByText("artist/album/song.flac")).toBeInTheDocument();
   });
 });
