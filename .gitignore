@@ -8,7 +8,6 @@ coverage/
 
 # Tauri
 src-tauri/target/
-src-tauri/icons/
 
 # IDE
 .vscode/
