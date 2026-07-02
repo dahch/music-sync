@@ -93,3 +93,15 @@ export function onCopyProgress(
     callback(event.payload);
   });
 }
+
+export async function pauseCopy(): Promise<void> {
+  return invoke("pause_copy");
+}
+
+export async function resumeCopy(): Promise<void> {
+  return invoke("resume_copy");
+}
+
+export async function cancelCopy(): Promise<void> {
+  return invoke("cancel_copy");
+}
