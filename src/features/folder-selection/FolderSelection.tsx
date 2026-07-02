@@ -31,52 +31,60 @@ export function FolderSelection({ onCompare, disabled }: FolderSelectionProps) {
   };
 
   return (
-    <div style={{ marginBottom: "1rem" }}>
-      <div style={{ marginBottom: "0.75rem" }}>
-        <label style={{ display: "block", marginBottom: "0.25rem", fontWeight: 600 }}>
+    <div className="mb-6 p-5 bg-zinc-900 rounded-lg border border-zinc-800">
+      <div className="mb-4">
+        <label className="block mb-1.5 text-sm font-medium text-zinc-300">
           Source folder
         </label>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div className="flex gap-2">
           <input
             type="text"
             value={source}
             readOnly
             placeholder="Select source folder..."
-            style={{ flex: 1, padding: "0.4rem", borderRadius: 4, border: "1px solid #ccc" }}
+            className="flex-1 px-3 py-2 rounded-md bg-zinc-950 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600"
           />
-          <button onClick={handleSource} disabled={disabled}>
+          <button
+            onClick={handleSource}
+            disabled={disabled}
+            className="px-3 py-2 text-sm border border-zinc-700 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default"
+          >
             Browse…
           </button>
         </div>
       </div>
 
-      <div style={{ marginBottom: "0.75rem" }}>
-        <label style={{ display: "block", marginBottom: "0.25rem", fontWeight: 600 }}>
+      <div className="mb-4">
+        <label className="block mb-1.5 text-sm font-medium text-zinc-300">
           Destination folder
         </label>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div className="flex gap-2">
           <input
             type="text"
             value={dest}
             readOnly
             placeholder="Select destination folder..."
-            style={{ flex: 1, padding: "0.4rem", borderRadius: 4, border: "1px solid #ccc" }}
+            className="flex-1 px-3 py-2 rounded-md bg-zinc-950 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600"
           />
-          <button onClick={handleDest} disabled={disabled}>
+          <button
+            onClick={handleDest}
+            disabled={disabled}
+            className="px-3 py-2 text-sm border border-zinc-700 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default"
+          >
             Browse…
           </button>
         </div>
       </div>
 
-      <div style={{ marginBottom: "0.75rem" }}>
-        <label style={{ display: "block", marginBottom: "0.25rem", fontWeight: 600 }}>
+      <div className="mb-4">
+        <label className="block mb-1.5 text-sm font-medium text-zinc-300">
           Comparison level
         </label>
         <select
           value={level}
           onChange={(e) => setLevel(e.target.value)}
           disabled={disabled}
-          style={{ padding: "0.4rem", borderRadius: 4, border: "1px solid #ccc" }}
+          className="px-3 py-2 rounded-md bg-zinc-950 border border-zinc-700 text-sm text-zinc-200"
         >
           <option value="Fast">Fast (path only)</option>
           <option value="Metadata">Metadata (size + mtime)</option>
@@ -87,11 +95,7 @@ export function FolderSelection({ onCompare, disabled }: FolderSelectionProps) {
       <button
         onClick={() => onCompare(source, dest, level)}
         disabled={disabled || !source || !dest}
-        style={{
-          padding: "0.5rem 1.5rem",
-          fontWeight: 600,
-          cursor: disabled || !source || !dest ? "not-allowed" : "pointer",
-        }}
+        className="px-5 py-2 text-sm font-semibold rounded-md bg-zinc-100 text-zinc-900 hover:bg-white cursor-pointer transition-colors disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed"
       >
         Compare
       </button>

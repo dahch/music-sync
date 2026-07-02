@@ -14,12 +14,12 @@ export function statusLabel(status: CopyItemResult["status"]): string {
 }
 
 export function statusColor(status: CopyItemResult["status"]): string {
-  if (status === "Done") return "#2e7d32";
-  if (status === "Pending") return "#888";
-  if (status === "InProgress") return "#1565c0";
-  if (status === "Cancelled") return "#e65100";
-  if (typeof status === "object" && "Failed" in status) return "#c62828";
-  return "#888";
+  if (status === "Done") return "#22c55e";
+  if (status === "Pending") return "#71717a";
+  if (status === "InProgress") return "#3b82f6";
+  if (status === "Cancelled") return "#f59e0b";
+  if (typeof status === "object" && "Failed" in status) return "#ef4444";
+  return "#71717a";
 }
 
 export function CopyProgressView() {
@@ -45,141 +45,86 @@ export function CopyProgressView() {
     ) ?? false;
 
   return (
-    <div
-      style={{
-        marginTop: "1rem",
-        padding: "1rem",
-        border: "1px solid #ccc",
-        borderRadius: 6,
-        backgroundColor: "#fafafa",
-      }}
-    >
+    <div className="mt-4 p-4 border border-zinc-700 rounded-lg bg-zinc-900/50">
       {copyError && (
-        <div style={{ color: "#c62828", fontWeight: 600, fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+        <div className="text-red-400 font-semibold text-[13px] mb-2">
           Copy failed: {copyError}
         </div>
       )}
 
-      <h3 style={{ margin: "0 0 0.75rem" }}>
-        {copyPaused ? "Paused" : copyRunning ? "Copying…" : copyError ? "Copy failed" : copyDone ? (hasFailed ? "Copy completed with errors" : "Copy completed") : ""}
+      <h3 className="text-base font-semibold mb-3 text-zinc-100">
+        {copyPaused ? "Paused" : copyRunning ? "Copying\u2026" : copyError ? "Copy failed" : copyDone ? (hasFailed ? "Copy completed with errors" : "Copy completed") : ""}
       </h3>
 
-      {/* Global progress bar */}
-      <div
-        style={{
-          height: 12,
-          backgroundColor: "#e0e0e0",
-          borderRadius: 6,
-          overflow: "hidden",
-          marginBottom: "0.75rem",
-        }}
-      >
+      <div className="h-3 bg-zinc-700 rounded-full overflow-hidden mb-3">
         <div
+          data-testid="progress-bar"
+          className="h-full rounded-full transition-all duration-300"
           style={{
-            height: "100%",
             width: `${Math.min(pct, 100)}%`,
-            backgroundColor: hasFailed ? "#c62828" : "#2e7d32",
-            borderRadius: 6,
-            transition: "width 0.3s ease",
+            backgroundColor: hasFailed ? "#ef4444" : "#22c55e",
           }}
         />
       </div>
 
-      <div style={{ fontSize: "0.85rem", color: "#555", marginBottom: "0.75rem" }}>
+      <div className="text-[13px] text-zinc-400 mb-3">
         {filesCompleted} / {totalFiles} files
         {progress && !copyDone && !copyPaused && (
           <>
-            {" · "}
+            {" \u00b7 "}
             {formatSize(progress.bytesCopied)} / {formatSize(progress.totalFileSize)} —{" "}
-            <span style={{ fontFamily: "monospace" }}>{progress.currentFile}</span>
+            <span className="font-mono text-zinc-300">{progress.currentFile}</span>
           </>
         )}
         {copyPaused && progress && (
           <>
-            {" · paused at "}
-            <span style={{ fontFamily: "monospace" }}>{progress.currentFile}</span>
+            {" \u00b7 paused at "}
+            <span className="font-mono text-zinc-300">{progress.currentFile}</span>
           </>
         )}
       </div>
 
-      {/* Control buttons */}
       {copyRunning && !copyDone && (
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <div className="flex gap-2 mb-3">
           {!copyPaused ? (
             <button
               onClick={pause}
-              style={{
-                padding: "0.4rem 1rem",
-                fontSize: "0.85rem",
-                border: "1px solid #888",
-                borderRadius: 4,
-                backgroundColor: "#fff",
-                cursor: "pointer",
-              }}
+              className="px-4 py-1.5 text-[13px] border border-zinc-600 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
             >
               Pause
             </button>
           ) : (
             <button
               onClick={resume}
-              style={{
-                padding: "0.4rem 1rem",
-                fontSize: "0.85rem",
-                border: "1px solid #2e7d32",
-                borderRadius: 4,
-                backgroundColor: "#2e7d32",
-                color: "#fff",
-                cursor: "pointer",
-              }}
+              className="px-4 py-1.5 text-[13px] border border-emerald-600 rounded-md bg-emerald-600 text-white hover:bg-emerald-500 cursor-pointer transition-colors"
             >
               Resume
             </button>
           )}
           <button
             onClick={cancel}
-            style={{
-              padding: "0.4rem 1rem",
-              fontSize: "0.85rem",
-              border: "1px solid #c62828",
-              borderRadius: 4,
-              backgroundColor: "#fff",
-              color: "#c62828",
-              cursor: "pointer",
-            }}
+            className="px-4 py-1.5 text-[13px] border border-red-600 rounded-md bg-transparent text-red-400 hover:bg-red-950/30 cursor-pointer transition-colors"
           >
             Cancel
           </button>
         </div>
       )}
 
-      {/* File list */}
       {copyResults && copyResults.length > 0 && (
-        <div style={{ maxHeight: 240, overflowY: "auto", fontSize: "0.85rem" }}>
+        <div className="max-h-60 overflow-y-auto text-[13px]">
           {copyResults.map((r) => (
             <div
               key={r.relativePath}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                padding: "0.2rem 0",
-                borderBottom: "1px solid #eee",
-              }}
+              className="flex items-center gap-2 py-1 border-b border-zinc-800"
             >
               <span
-                style={{
-                  display: "inline-block",
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  backgroundColor: statusColor(r.status),
-                  flexShrink: 0,
-                }}
+                className="inline-block w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: statusColor(r.status) }}
               />
-              <span style={{ fontFamily: "monospace", fontSize: "0.8rem", flex: 1, wordBreak: "break-all" }}>
+              <span className="font-mono text-xs flex-1 break-all text-zinc-300">
                 {r.relativePath}
               </span>
-              <span style={{ color: statusColor(r.status), fontSize: "0.75rem", whiteSpace: "nowrap" }}>
+              <span className="text-xs whitespace-nowrap" style={{ color: statusColor(r.status) }}>
                 {statusLabel(r.status)}
               </span>
             </div>
@@ -190,15 +135,7 @@ export function CopyProgressView() {
       {(copyDone || copyError) && (
         <button
           onClick={resetCopy}
-          style={{
-            marginTop: "0.75rem",
-            padding: "0.4rem 1rem",
-            fontSize: "0.85rem",
-            border: "1px solid #888",
-            borderRadius: 4,
-            backgroundColor: "transparent",
-            cursor: "pointer",
-          }}
+          className="mt-3 px-4 py-1.5 text-[13px] border border-zinc-600 rounded-md bg-transparent text-zinc-300 hover:bg-zinc-800 cursor-pointer transition-colors"
         >
           Back to comparison
         </button>

@@ -12,10 +12,24 @@ const STATUS_LABEL: Record<DiffStatus, string> = {
 };
 
 const STATUS_COLOR: Record<DiffStatus, string> = {
-  New: "#2e7d32",
-  Orphan: "#e65100",
-  Identical: "#666",
-  Different: "#c62828",
+  New: "#22c55e",
+  Orphan: "#f59e0b",
+  Identical: "#71717a",
+  Different: "#ef4444",
+};
+
+const STATUS_BG: Record<DiffStatus, string> = {
+  New: "border-emerald-500",
+  Orphan: "border-amber-500",
+  Identical: "border-zinc-500",
+  Different: "border-red-500",
+};
+
+const STATUS_TEXT: Record<DiffStatus, string> = {
+  New: "text-emerald-400",
+  Orphan: "text-amber-400",
+  Identical: "text-zinc-400",
+  Different: "text-red-400",
 };
 
 const SPACE_CHECK_DEBOUNCE_MS = 300;
@@ -37,18 +51,18 @@ export function ComparisonSummary({ result }: { result: ComparisonResult }) {
   );
 
   return (
-    <div style={{ marginBottom: "1rem" }}>
-      <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-        <StatCard label="New" count={stats.totalNew} size={stats.totalSizeNew} color="#2e7d32" />
-        <StatCard label="Different" count={stats.totalDifferent} size={stats.totalSizeDifferent} color="#c62828" />
-        <StatCard label="Orphan" count={stats.totalOrphan} color="#e65100" />
-        <StatCard label="Identical" count={stats.totalIdentical} color="#666" />
+    <div className="mb-4">
+      <div className="flex gap-3 flex-wrap">
+        <StatCard label="New" count={stats.totalNew} size={stats.totalSizeNew} status="New" />
+        <StatCard label="Different" count={stats.totalDifferent} size={stats.totalSizeDifferent} status="Different" />
+        <StatCard label="Orphan" count={stats.totalOrphan} status="Orphan" />
+        <StatCard label="Identical" count={stats.totalIdentical} status="Identical" />
       </div>
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
-        <SmallButton onClick={() => handleSelectByStatus("New")} color="#2e7d32">
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <SmallButton onClick={() => handleSelectByStatus("New")} colorClass="border-emerald-600 text-emerald-400 hover:bg-emerald-950/30">
           Select all New
         </SmallButton>
-        <SmallButton onClick={() => handleSelectByStatus("Different")} color="#c62828">
+        <SmallButton onClick={() => handleSelectByStatus("Different")} colorClass="border-red-600 text-red-400 hover:bg-red-950/30">
           Select all Different
         </SmallButton>
         <SmallButton onClick={() => selectOnly(result.entries.map((e) => e.relativePath))}>
@@ -65,48 +79,34 @@ export function ComparisonSummary({ result }: { result: ComparisonResult }) {
 function SmallButton({
   children,
   onClick,
-  color,
+  colorClass,
   disabled,
 }: {
   children: ReactNode;
   onClick: () => void;
-  color?: string;
+  colorClass?: string;
   disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      style={{
-        padding: "0.25rem 0.6rem",
-        fontSize: "0.8rem",
-        border: `1px solid ${color ?? "#888"}`,
-        borderRadius: 4,
-        backgroundColor: "transparent",
-        color: color ?? "#333",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-      }}
+      className={`px-2.5 py-1 text-xs border rounded-md bg-transparent cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-default ${
+        colorClass ?? "border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+      }`}
     >
       {children}
     </button>
   );
 }
 
-function StatCard({ label, count, size, color }: { label: string; count: number; size?: number; color: string }) {
+function StatCard({ label, count, size, status }: { label: string; count: number; size?: number; status: DiffStatus }) {
   return (
-    <div
-      style={{
-        padding: "0.75rem",
-        borderRadius: 6,
-        border: `1px solid ${color}`,
-        minWidth: 120,
-      }}
-    >
-      <div style={{ fontSize: "1.5rem", fontWeight: 700, color }}>{count}</div>
-      <div style={{ fontSize: "0.8rem", fontWeight: 600 }}>{label}</div>
+    <div className={`px-3 py-2.5 rounded-lg border ${STATUS_BG[status]} min-w-[120px]`}>
+      <div className={`text-2xl font-bold ${STATUS_TEXT[status]}`}>{count}</div>
+      <div className="text-xs font-semibold text-zinc-300">{label}</div>
       {size !== undefined && count > 0 && (
-        <div style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>{formatSize(size)}</div>
+        <div className="text-[11px] text-zinc-500 mt-0.5">{formatSize(size)}</div>
       )}
     </div>
   );
@@ -124,31 +124,26 @@ export function ComparisonEntryRow({
   const srcSize = entry.source?.sizeBytes;
   const dstSize = entry.destination?.sizeBytes;
   return (
-    <tr>
-      <td style={{ padding: "0.3rem 0.5rem" }}>
+    <tr className="border-b border-zinc-800">
+      <td className="py-1.5 px-2">
         <input
           type="checkbox"
           checked={selected}
           onChange={() => onToggle(entry.relativePath)}
           aria-label={`Select ${entry.relativePath}`}
+          className="size-3.5 rounded border-zinc-600 bg-zinc-800 accent-emerald-600"
         />
       </td>
-      <td style={{ padding: "0.3rem 0.5rem" }}>
+      <td className="py-1.5 px-2">
         <span
-          style={{
-            display: "inline-block",
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            backgroundColor: STATUS_COLOR[entry.status],
-            marginRight: "0.5rem",
-          }}
+          className="inline-block w-2.5 h-2.5 rounded-full mr-2"
+          style={{ backgroundColor: STATUS_COLOR[entry.status] }}
         />
         {STATUS_LABEL[entry.status]}
       </td>
-      <td style={{ fontFamily: "monospace", fontSize: "0.85rem", padding: "0.3rem 0.5rem" }}>{entry.relativePath}</td>
-      <td style={{ textAlign: "right", padding: "0.3rem 0.5rem" }}>{srcSize !== undefined ? formatSize(srcSize) : "—"}</td>
-      <td style={{ textAlign: "right", padding: "0.3rem 0.5rem" }}>{dstSize !== undefined ? formatSize(dstSize) : "—"}</td>
+      <td className="font-mono text-[13px] py-1.5 px-2 text-zinc-300">{entry.relativePath}</td>
+      <td className="text-right py-1.5 px-2 text-zinc-400 text-sm">{srcSize !== undefined ? formatSize(srcSize) : "\u2014"}</td>
+      <td className="text-right py-1.5 px-2 text-zinc-400 text-sm">{dstSize !== undefined ? formatSize(dstSize) : "\u2014"}</td>
     </tr>
   );
 }
@@ -163,19 +158,19 @@ export function ComparisonList({
   onToggle: (path: string) => void;
 }) {
   if (result.entries.length === 0) {
-    return <p style={{ color: "#666" }}>No files found.</p>;
+    return <p className="text-zinc-400 text-sm">No files found.</p>;
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
         <thead>
-          <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
-            <th style={{ padding: "0.4rem 0.5rem", width: 32 }}></th>
-            <th style={{ padding: "0.4rem 0.5rem" }}>Status</th>
-            <th style={{ padding: "0.4rem 0.5rem" }}>Path</th>
-            <th style={{ padding: "0.4rem 0.5rem", textAlign: "right" }}>Source size</th>
-            <th style={{ padding: "0.4rem 0.5rem", textAlign: "right" }}>Dest size</th>
+          <tr className="border-b-2 border-zinc-700 text-left">
+            <th className="py-2 px-2 w-8"></th>
+            <th className="py-2 px-2 text-zinc-400 text-xs font-medium">Status</th>
+            <th className="py-2 px-2 text-zinc-400 text-xs font-medium">Path</th>
+            <th className="py-2 px-2 text-right text-zinc-400 text-xs font-medium">Source size</th>
+            <th className="py-2 px-2 text-right text-zinc-400 text-xs font-medium">Dest size</th>
           </tr>
         </thead>
         <tbody>
@@ -241,46 +236,28 @@ export function SelectionPanel({ result }: { result: ComparisonResult }) {
   const isWarning = freeSpace !== null && selectedSize > freeSpace;
 
   return (
-    <div
-      style={{
-        marginTop: "1rem",
-        padding: "0.75rem",
-        border: "1px solid #ccc",
-        borderRadius: 6,
-        backgroundColor: "#fafafa",
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>
+    <div className="mt-4 p-3 border border-zinc-700 rounded-lg bg-zinc-900/50">
+      <div className="font-semibold text-sm mb-1 text-zinc-200">
         Selected: {selectedCount} file{selectedCount !== 1 ? "s" : ""} &middot; {formatSize(selectedSize)}
       </div>
-      {spaceLoading && <div style={{ fontSize: "0.85rem", color: "#888" }}>Checking free space…</div>}
-      {spaceError && <div style={{ fontSize: "0.85rem", color: "#c62828" }}>Error: {spaceError}</div>}
+      {spaceLoading && <div className="text-[13px] text-zinc-500">Checking free space...</div>}
+      {spaceError && <div className="text-[13px] text-red-400">Error: {spaceError}</div>}
       {freeSpace !== null && !spaceLoading && (
         <>
-          <div style={{ fontSize: "0.85rem", color: "#555" }}>
+          <div className="text-[13px] text-zinc-400">
             Free on destination: {formatSize(freeSpace)}
           </div>
-          <div
-            style={{
-              height: 8,
-              backgroundColor: "#e0e0e0",
-              borderRadius: 4,
-              marginTop: "0.25rem",
-              overflow: "hidden",
-            }}
-          >
+          <div className="h-2 bg-zinc-700 rounded-full mt-1 overflow-hidden">
             <div
+              className="h-full rounded-full transition-all duration-300"
               style={{
-                height: "100%",
                 width: `${Math.min((selectedSize / freeSpace) * 100, 100)}%`,
-                backgroundColor: isWarning ? "#c62828" : "#2e7d32",
-                borderRadius: 4,
-                transition: "width 0.3s ease",
+                backgroundColor: isWarning ? "#ef4444" : "#22c55e",
               }}
             />
           </div>
           {isWarning && (
-            <div style={{ color: "#c62828", fontWeight: 600, fontSize: "0.85rem", marginTop: "0.15rem" }}>
+            <div className="text-red-400 font-semibold text-[13px] mt-0.5">
               Not enough free space! Need {formatSize(selectedSize)} but only {formatSize(freeSpace)} available.
             </div>
           )}
@@ -296,13 +273,13 @@ export function ComparisonView({ result }: { result: ComparisonResult }) {
 
   return (
     <div>
-      <h3 style={{ marginBottom: "0.5rem" }}>
-        Comparison results —
-        <span style={{ fontWeight: 400, marginLeft: "0.25rem" }}>
+      <h3 className="text-lg font-semibold mb-1 text-zinc-100">
+        Comparison results{" "}
+        <span className="font-normal text-zinc-400 ml-1">
           {result.comparisonLevel} level
         </span>
       </h3>
-      <p style={{ fontSize: "0.8rem", color: "#888", marginBottom: "0.75rem" }}>
+      <p className="text-xs text-zinc-500 mb-3 font-mono">
         Source: {result.sourceRoot} &nbsp;|&nbsp; Destination: {result.destinationRoot}
       </p>
       <ComparisonSummary result={result} />

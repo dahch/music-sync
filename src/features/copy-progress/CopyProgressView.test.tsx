@@ -81,35 +81,35 @@ describe("statusLabel", () => {
 
 describe("statusColor", () => {
   it('returns green for Done status', () => {
-    expect(statusColor("Done")).toBe("#2e7d32");
+    expect(statusColor("Done")).toBe("#22c55e");
   });
 
   it('returns gray for Pending status', () => {
-    expect(statusColor("Pending")).toBe("#888");
+    expect(statusColor("Pending")).toBe("#71717a");
   });
 
   it('returns blue for InProgress status', () => {
-    expect(statusColor("InProgress")).toBe("#1565c0");
+    expect(statusColor("InProgress")).toBe("#3b82f6");
   });
 
   it('returns red for Failed object status', () => {
-    expect(statusColor({ Failed: "error" })).toBe("#c62828");
+    expect(statusColor({ Failed: "error" })).toBe("#ef4444");
   });
 
   it('returns orange for Cancelled status', () => {
-    expect(statusColor("Cancelled")).toBe("#e65100");
+    expect(statusColor("Cancelled")).toBe("#f59e0b");
   });
 
   it('returns gray fallback for Skipped', () => {
-    expect(statusColor("Skipped")).toBe("#888");
+    expect(statusColor("Skipped")).toBe("#71717a");
   });
 
   it('returns gray fallback for Verifying', () => {
-    expect(statusColor("Verifying")).toBe("#888");
+    expect(statusColor("Verifying")).toBe("#71717a");
   });
 
   it('returns gray fallback for unknown status', () => {
-    expect(statusColor("Unknown" as any)).toBe("#888");
+    expect(statusColor("Unknown" as any)).toBe("#71717a");
   });
 });
 
@@ -251,23 +251,17 @@ describe("CopyProgressView", () => {
     expect(bar).toBeInTheDocument();
   });
 
-  it("progress bar color is green (#2e7d32 / rgb(46,125,50)) when no failures", () => {
+  it("progress bar color is green (#22c55e / rgb(34,197,94)) when no failures", () => {
     useAppStore.setState({
       copyRunning: true,
       copyProgress: { currentFile: "a.flac", bytesCopied: 0, totalFileSize: 100, filesCompleted: 1, totalFiles: 5 },
     });
     render(<CopyProgressView />);
-    // jsdom renders hex colors as rgb — find the inner bar by its width
-    const bars = document.querySelectorAll<HTMLElement>('[style*="height: 100%"]');
-    expect(bars.length).toBeGreaterThanOrEqual(1);
-    // The last one is the inner progress bar (outer has height: 12px)
-    const innerBar = Array.from(bars).find(
-      (el) => el.style.width !== "" && !el.style.backgroundColor.includes("e0e0e0"),
-    );
-    expect(innerBar?.style.backgroundColor).toBe("rgb(46, 125, 50)");
+    const innerBar = screen.getByTestId("progress-bar");
+    expect(innerBar.style.backgroundColor).toBe("rgb(34, 197, 94)");
   });
 
-  it("progress bar color is red (#c62828 / rgb(198,40,40)) when there are failures", () => {
+  it("progress bar color is red (#ef4444 / rgb(239,68,68)) when there are failures", () => {
     useAppStore.setState({
       copyRunning: false,
       copyDone: true,
@@ -278,11 +272,8 @@ describe("CopyProgressView", () => {
       copyProgress: { currentFile: "bad.flac", bytesCopied: 0, totalFileSize: 0, filesCompleted: 2, totalFiles: 2 },
     });
     render(<CopyProgressView />);
-    const bars = document.querySelectorAll<HTMLElement>('[style*="height: 100%"]');
-    const innerBar = Array.from(bars).find(
-      (el) => el.style.width !== "" && !el.style.backgroundColor.includes("e0e0e0"),
-    );
-    expect(innerBar?.style.backgroundColor).toBe("rgb(198, 40, 40)");
+    const innerBar = screen.getByTestId("progress-bar");
+    expect(innerBar.style.backgroundColor).toBe("rgb(239, 68, 68)");
   });
 
   it("shows progress info with B format for small files", () => {

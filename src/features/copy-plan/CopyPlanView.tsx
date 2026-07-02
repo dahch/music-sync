@@ -7,11 +7,6 @@ export type CopyPlanProps = {
   result: ComparisonResult;
 };
 
-/**
- * CopyPlanView — review and confirm step.
- * Shows the list of files about to be copied,
- * a BLAKE3 verification checkbox, and a "Start Copy" button.
- */
 export function CopyPlanView({ result }: CopyPlanProps) {
   const selectedPaths = useAppStore((s) => s.selectedPaths);
   const verifyCopy = useAppStore((s) => s.verifyCopy);
@@ -46,7 +41,7 @@ export function CopyPlanView({ result }: CopyPlanProps) {
 
   if (selectedPaths.length === 0) {
     return (
-      <div style={{ padding: "1rem", color: "#888", fontSize: "0.9rem" }}>
+      <div className="py-4 text-zinc-500 text-sm">
         No files selected for copy.
       </div>
     );
@@ -56,91 +51,58 @@ export function CopyPlanView({ result }: CopyPlanProps) {
   const isWarning = freeSpace !== null && totalSize > freeSpace;
 
   return (
-    <div
-      style={{
-        marginTop: "1rem",
-        padding: "1rem",
-        border: "1px solid #ccc",
-        borderRadius: 6,
-        backgroundColor: "#fafafa",
-      }}
-    >
-      <h3 style={{ margin: "0 0 0.75rem" }}>Copy Plan</h3>
+    <div className="mt-4 p-4 border border-zinc-700 rounded-lg bg-zinc-900/50">
+      <h3 className="text-base font-semibold mb-3 text-zinc-100">Copy Plan</h3>
 
-      <div style={{ fontSize: "0.85rem", marginBottom: "0.75rem" }}>
+      <div className="text-[13px] mb-3 text-zinc-300">
         <strong>{selectedPaths.length}</strong> file{selectedPaths.length !== 1 ? "s" : ""} to copy
-        {" · "}
+        {" \u00b7 "}
         <strong>{formatSize(totalSize)}</strong> total
       </div>
 
       {freeSpace !== null && (
-        <div style={{ fontSize: "0.85rem", color: isWarning ? "#c62828" : "#555", marginBottom: "0.75rem" }}>
+        <div className={`text-[13px] mb-3 ${isWarning ? "text-red-400" : "text-zinc-400"}`}>
           Free on destination: {formatSize(freeSpace)}
           {isWarning && (
-            <span style={{ fontWeight: 600 }}>
+            <span className="font-semibold">
               {" "}— Not enough space!
             </span>
           )}
         </div>
       )}
 
-      {/* Selected files list — scrollable */}
-      <div
-        style={{
-          maxHeight: 160,
-          overflowY: "auto",
-          fontSize: "0.8rem",
-          fontFamily: "monospace",
-          marginBottom: "0.75rem",
-          border: "1px solid #eee",
-          borderRadius: 4,
-          padding: "0.4rem",
-        }}
-      >
+      <div className="max-h-40 overflow-y-auto text-xs font-mono mb-3 border border-zinc-700 rounded-md p-2 bg-zinc-950">
         {selectedFiles.map((f) => (
-          <div key={f.path} style={{ padding: "0.15rem 0", display: "flex", justifyContent: "space-between" }}>
-            <span>{f.path}</span>
-            <span style={{ color: "#888" }}>{formatSize(f.size)}</span>
+          <div key={f.path} className="py-0.5 flex justify-between">
+            <span className="text-zinc-300">{f.path}</span>
+            <span className="text-zinc-500">{formatSize(f.size)}</span>
           </div>
         ))}
       </div>
 
-      {/* Verification checkbox (checkbox de verificación) */}
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5rem",
-          fontSize: "0.85rem",
-          marginBottom: "0.75rem",
-          cursor: "pointer",
-        }}
-      >
+      <label className="flex items-center gap-2 text-[13px] mb-3 cursor-pointer text-zinc-400 hover:text-zinc-300">
         <input
           type="checkbox"
           checked={verifyCopy}
           onChange={(e) => setVerifyCopy(e.target.checked)}
           aria-label="Enable BLAKE3 verification after copy"
+          className="size-3.5 rounded border-zinc-600 bg-zinc-800 accent-emerald-600"
         />
         <span>Verify copied files (BLAKE3 hash) — slower but safer</span>
       </label>
 
-      {/* Start Copy button */}
       <button
         onClick={handleStartCopy}
         disabled={copyRunning || selectedPaths.length === 0}
-        style={{
-          padding: "0.5rem 1.5rem",
-          fontSize: "0.9rem",
-          fontWeight: 600,
-          border: "none",
-          borderRadius: 4,
-          backgroundColor: copyRunning ? "#aaa" : isWarning ? "#c62828" : "#2e7d32",
-          color: "#fff",
-          cursor: copyRunning ? "default" : "pointer",
-        }}
+        className={`px-5 py-2 text-sm font-semibold rounded-md text-white cursor-pointer transition-colors ${
+          copyRunning
+            ? "bg-zinc-600 cursor-default"
+            : isWarning
+              ? "bg-red-600 hover:bg-red-500"
+              : "bg-emerald-600 hover:bg-emerald-500"
+        }`}
       >
-        {copyRunning ? "Copying…" : isWarning ? "Copy anyway" : `Copy ${selectedPaths.length} file${selectedPaths.length !== 1 ? "s" : ""}`}
+        {copyRunning ? "Copying\u2026" : isWarning ? "Copy anyway" : `Copy ${selectedPaths.length} file${selectedPaths.length !== 1 ? "s" : ""}`}
       </button>
     </div>
   );

@@ -297,7 +297,7 @@ describe("HistoryView", () => {
     render(<HistoryView />);
     const statusSpan = await screen.findByText("Completed");
     // jsdom renders hex colors as rgb
-    expect(statusSpan.style.color).toBe("rgb(46, 125, 50)");
+    expect(statusSpan.style.color).toBe("rgb(34, 197, 94)");
   });
 
   it("renders status in red for Failed entries", async () => {
@@ -320,7 +320,7 @@ describe("HistoryView", () => {
     const allFailed = await screen.findAllByText("Failed");
     // The span is the element with the color style
     const statusSpan = allFailed.find((el) => el.tagName === "SPAN");
-    expect(statusSpan?.style.color).toBe("rgb(198, 40, 40)");
+    expect(statusSpan?.style.color).toBe("rgb(239, 68, 68)");
   });
 
   it("renders status in orange for other statuses (e.g. InProgress)", async () => {
@@ -340,7 +340,7 @@ describe("HistoryView", () => {
 
     render(<HistoryView />);
     const statusSpan = await screen.findByText("InProgress");
-    expect(statusSpan.style.color).toBe("rgb(230, 81, 0)");
+    expect(statusSpan.style.color).toBe("rgb(245, 158, 11)");
   });
 
   it("shows dash (—) for failed count when filesFailed is 0", async () => {

@@ -88,25 +88,17 @@ export function HomePage() {
   }, [result, sourceRoot, destRoot, selectedPaths, startCopy, storeOnCopyProgress, verifyCopy]);
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: 960, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+    <div className="p-8 font-sans max-w-4xl mx-auto">
+      <div className="flex justify-between items-start mb-6">
         <div>
-          <h1 style={{ marginBottom: "0.25rem" }}>MusicSync</h1>
-          <p style={{ color: "#666", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
+          <h1 className="text-2xl font-bold tracking-tight mb-1">MusicSync</h1>
+          <p className="text-zinc-400 text-sm">
             Compare and sync audio libraries between your local collection and a portable device.
           </p>
         </div>
         <button
           onClick={() => setShowHistory((s) => !s)}
-          style={{
-            padding: "0.3rem 0.7rem",
-            fontSize: "0.8rem",
-            border: "1px solid #888",
-            borderRadius: 4,
-            backgroundColor: "transparent",
-            cursor: "pointer",
-            marginBottom: "1rem",
-          }}
+          className="px-3 py-1.5 text-xs border border-zinc-700 rounded-md bg-transparent text-zinc-300 hover:bg-zinc-800 cursor-pointer transition-colors"
         >
           {showHistory ? "Close history" : "Sync history"}
         </button>
@@ -117,21 +109,13 @@ export function HomePage() {
       {showHistory && <HistoryView />}
 
       {phase === "scanning" && (
-        <div style={{ margin: "1rem 0", padding: "1rem", backgroundColor: "#f5f5f5", borderRadius: 6 }}>
-          <p style={{ fontWeight: 600 }}>Scanning…</p>
+        <div className="my-4 p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+          <p className="font-semibold">Scanning…</p>
           {progress && (
-            <p style={{ fontSize: "0.85rem", color: "#555", marginTop: "0.25rem" }}>
+            <p className="text-sm text-zinc-400 mt-1">
               {progress.filesFound} files found
               {progress.currentPath && (
-                <span
-                  style={{
-                    fontFamily: "monospace",
-                    fontSize: "0.8rem",
-                    display: "block",
-                    marginTop: "0.25rem",
-                    wordBreak: "break-all",
-                  }}
-                >
+                <span className="font-mono text-xs block mt-1 break-all text-zinc-500">
                   {progress.currentPath}
                 </span>
               )}
@@ -141,34 +125,16 @@ export function HomePage() {
       )}
 
       {phase === "error" && (
-        <div
-          style={{
-            margin: "1rem 0",
-            padding: "1rem",
-            backgroundColor: "#ffebee",
-            borderRadius: 6,
-            color: "#c62828",
-          }}
-        >
-          <p style={{ fontWeight: 600 }}>Error</p>
-          <p style={{ fontSize: "0.85rem", marginTop: "0.25rem" }}>{error}</p>
+        <div className="my-4 p-4 bg-red-950/40 rounded-lg border border-red-800 text-red-300">
+          <p className="font-semibold">Error</p>
+          <p className="text-sm mt-1">{error}</p>
         </div>
       )}
 
       {(copyRunning || copyDone || copyError) && (
         <>
           {unmountMsg && (
-            <div
-              style={{
-                margin: "1rem 0",
-                padding: "0.75rem 1rem",
-                backgroundColor: "#fff3e0",
-                border: "1px solid #ffb74d",
-                borderRadius: 6,
-                color: "#e65100",
-                fontSize: "0.85rem",
-              }}
-            >
+            <div className="my-4 px-4 py-3 bg-amber-950/30 border border-amber-700/50 rounded-lg text-amber-300 text-sm">
               {unmountMsg}
             </div>
           )}
@@ -179,28 +145,24 @@ export function HomePage() {
       {result && !copyRunning && !copyDone && (
         <>
           <ComparisonView result={result} />
-          <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="mt-4 flex gap-2 items-center flex-wrap">
             <button
               onClick={handleCopy}
               disabled={selectedPaths.length === 0}
-              style={{
-                padding: "0.5rem 1.2rem",
-                fontSize: "0.9rem",
-                fontWeight: 600,
-                border: "none",
-                borderRadius: 4,
-                backgroundColor: selectedPaths.length === 0 ? "#ccc" : "#2e7d32",
-                color: "#fff",
-                cursor: selectedPaths.length === 0 ? "default" : "pointer",
-              }}
+              className={`px-5 py-2 text-sm font-semibold rounded-md text-white cursor-pointer transition-colors ${
+                selectedPaths.length === 0
+                  ? "bg-zinc-700 cursor-default"
+                  : "bg-emerald-600 hover:bg-emerald-500"
+              }`}
             >
               Copy selected ({selectedPaths.length} file{selectedPaths.length !== 1 ? "s" : ""})
             </button>
-            <label style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
+            <label className="text-xs flex items-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-300">
               <input
                 type="checkbox"
                 checked={verifyCopy}
                 onChange={(e) => setVerifyCopy(e.target.checked)}
+                className="size-3.5 rounded border-zinc-600 bg-zinc-800 accent-emerald-600"
               />
               Verify with checksum (BLAKE3)
             </label>
