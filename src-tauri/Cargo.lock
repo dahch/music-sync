@@ -1893,6 +1893,7 @@ name = "music-sync-copy-engine"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "fs2",
  "music-sync-domain",
  "serde",
  "serde_json",
@@ -1906,6 +1907,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

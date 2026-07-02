@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+pub mod mount;
+
 pub type Blake3Hash = [u8; 32];
 
 pub mod epoch_seconds {
