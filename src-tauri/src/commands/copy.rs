@@ -1,4 +1,5 @@
 use music_sync_copy_engine::{CopyController, CopyEngine, CopyHandle, CopyItem, CopyItemResult, CopyProgress};
+use music_sync_domain::CopyStatus;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -67,6 +68,12 @@ pub async fn copy_files(
         return Ok(Vec::new());
     }
 
+    // Verify destination volume is still accessible before starting
+    let dst_path = Path::new(&destination_root);
+    if !music_sync_domain::mount::is_path_mounted(dst_path) {
+        return Err("Destination volume is not accessible. It may have been unmounted.".into());
+    }
+
     // Clean up orphaned .tmp files from previous interrupted copies
     let _ = cleanup_tmp_files(&destination_root);
 
@@ -102,6 +109,14 @@ pub async fn copy_files(
             &handle,
         )
         .await;
+
+    // Emit volume:unmounted event if any item failed due to unmount
+    let unmounted = results.iter().any(|r| {
+        matches!(&r.status, CopyStatus::Failed(msg) if msg.contains("unmounted"))
+    });
+    if unmounted {
+        let _ = app.emit("volume:unmounted", "The destination volume was unmounted during copy. Some files may not have been copied.");
+    }
 
     Ok(results)
 }

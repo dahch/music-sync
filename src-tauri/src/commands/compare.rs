@@ -1,7 +1,7 @@
 use music_sync_comparator::Comparator;
 use music_sync_domain::{ComparisonLevel, ComparisonResult};
 use music_sync_scanner::Scanner;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 /// Parse a comparison level from its string representation.
@@ -40,6 +40,11 @@ pub async fn scan_and_compare(
     dest_scanner
         .validate()
         .map_err(|e| format!("Destination error: {}", e))?;
+
+    // Verify destination volume is still mounted before scanning
+    if !music_sync_domain::mount::is_path_mounted(Path::new(&dest_path)) {
+        return Err("Destination volume is not accessible. It may have been unmounted.".into());
+    }
 
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
 
