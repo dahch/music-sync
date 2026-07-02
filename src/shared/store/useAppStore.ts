@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { calculateSizeAndSpace, copyFiles, saveHistoryEntry } from "@/shared/api";
+import { calculateSizeAndSpace, copyFiles, saveHistoryEntry, pauseCopy, resumeCopy, cancelCopy } from "@/shared/api";
 import type { SpaceInfo, CopyProgress, CopyItemResult, SyncHistoryEntry } from "@/shared/api";
 
 interface AppState {
@@ -11,6 +11,7 @@ interface AppState {
   copyProgress: CopyProgress | null;
   copyResults: CopyItemResult[] | null;
   copyRunning: boolean;
+  copyPaused: boolean;
   copyDone: boolean;
   copyError: string | null;
   verifyCopy: boolean;
@@ -21,6 +22,9 @@ interface AppState {
   fetchSpaceInfo: (destinationRoot: string, selectedAbsolutePaths: string[]) => Promise<void>;
   startCopy: (sourceRoot: string, destinationRoot: string, relativePaths: string[], verify: boolean) => Promise<void>;
   onCopyProgress: (progress: CopyProgress) => void;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  cancel: () => Promise<void>;
   resetCopy: () => void;
   setVerifyCopy: (v: boolean) => void;
 }
@@ -33,6 +37,7 @@ function countFailed(results: CopyItemResult[]): number {
   return results.filter((r) => {
     if (r.status === "Done") return false;
     if (r.status === "Skipped") return false;
+    if (r.status === "Cancelled") return false;
     return true;
   }).length;
 }
@@ -46,6 +51,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   copyProgress: null,
   copyResults: null,
   copyRunning: false,
+  copyPaused: false,
   copyDone: false,
   copyError: null,
   verifyCopy: false,
@@ -78,7 +84,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   startCopy: async (sourceRoot: string, destinationRoot: string, relativePaths: string[], verify: boolean) => {
-    set({ copyRunning: true, copyDone: false, copyProgress: null, copyResults: null, copyError: null });
+    set({ copyRunning: true, copyPaused: false, copyDone: false, copyProgress: null, copyResults: null, copyError: null });
 
     try {
       const items = relativePaths.map((p) => ({ relativePath: p, verify }));
@@ -86,6 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const filesNew = results.filter((r) => r.status === "Done").length;
       const filesFailed = countFailed(results);
+      const filesCancelled = results.filter((r) => r.status === "Cancelled").length;
       const space = get().spaceInfo;
       const totalBytes = space ? space.totalSelectedSize : 0;
 
@@ -103,7 +110,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         totalBytes,
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        status: filesFailed > 0 ? "CompletedWithErrors" : "Completed",
+        status: filesFailed > 0 ? "CompletedWithErrors" : filesCancelled > 0 ? "Cancelled" : "Completed",
         errorMessage: null,
       };
 
@@ -123,8 +130,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ copyProgress: progress });
   },
 
+  pause: async () => {
+    try {
+      await pauseCopy();
+      set({ copyPaused: true });
+    } catch {
+      // ignore — pause is best-effort
+    }
+  },
+
+  resume: async () => {
+    try {
+      await resumeCopy();
+      set({ copyPaused: false });
+    } catch {
+      // ignore
+    }
+  },
+
+  cancel: async () => {
+    try {
+      await cancelCopy();
+      set({ copyPaused: false });
+    } catch {
+      // ignore
+    }
+  },
+
   resetCopy: () => {
-    set({ copyProgress: null, copyResults: null, copyRunning: false, copyDone: false, copyError: null });
+    set({ copyProgress: null, copyResults: null, copyRunning: false, copyPaused: false, copyDone: false, copyError: null });
   },
 
   setVerifyCopy: (v: boolean) => {

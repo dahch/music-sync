@@ -130,6 +130,7 @@ describe("useAppStore — resetCopy", () => {
       copyProgress: { currentFile: "a.flac", bytesCopied: 500, totalFileSize: 1000, filesCompleted: 3, totalFiles: 5 },
       copyResults: [{ relativePath: "a.flac", status: "Done" }],
       copyRunning: true,
+      copyPaused: false,
       copyDone: true,
       copyError: "some error",
     });
