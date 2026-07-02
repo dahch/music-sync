@@ -9,6 +9,11 @@ export interface ScanProgress {
   currentPath: string | null;
 }
 
+export interface SpaceInfo {
+  totalSelectedSize: number;
+  freeSpaceOnDestination: number;
+}
+
 export async function scanAndCompare(
   sourcePath: string,
   destPath: string,
@@ -26,5 +31,15 @@ export function onScanProgress(
 ): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan:progress", (event) => {
     callback(event.payload);
+  });
+}
+
+export async function calculateSizeAndSpace(
+  destinationRoot: string,
+  selectedPaths: string[],
+): Promise<SpaceInfo> {
+  return invoke("calculate_size_and_space", {
+    destinationRoot,
+    selectedPaths,
   });
 }
