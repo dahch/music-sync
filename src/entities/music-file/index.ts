@@ -19,7 +19,8 @@ export type CopyStatus =
   | "Verifying"
   | "Done"
   | { Failed: string }
-  | "Skipped";
+  | "Skipped"
+  | "Cancelled";
 
 export interface ComparisonStats {
   totalNew: number;
