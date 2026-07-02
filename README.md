@@ -20,16 +20,16 @@ src-tauri/
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
 ├── capabilities/        # Tauri v2: core + dialog + core:event:default permissions
 ├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
-├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅, copy_files ✅, save_history_entry ✅, list_history ✅
+├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅, copy_files ✅, pause_copy ✅, resume_copy ✅, cancel_copy ✅, save_history_entry ✅, list_history ✅
 ├── Cargo.toml           # Rust workspace root
 └── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 
 src/                     # Frontend (Feature-Sliced Design)
 ├── app/                 # App entry (main.tsx → App.tsx → HomePage)
-├── pages/               # home: FolderSelection + ComparisonView + CopyProgressView + HistoryView  ✅
-├── features/            # folder-selection ✅, comparison-view ✅, copy-progress ✅, history-view ✅, rest stubs  🚧
+├── pages/               # home: FolderSelection + ComparisonView + CopyPlanView + CopyProgressView + HistoryView  ✅
+├── features/            # folder-selection ✅, comparison-view ✅, copy-plan ✅, copy-progress ✅, history-view ✅, rest stubs  🚧
 ├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile, SyncHistoryEntry…   ✅
-└── shared/              # api (scanAndCompare, calculateSizeAndSpace, saveHistoryEntry, listHistory, copyFiles, onCopyProgress ✅), store (selection + space check + copy state), lib stubs  🚧
+└── shared/              # api (scanAndCompare, calculateSizeAndSpace, saveHistoryEntry, listHistory, copyFiles, onCopyProgress, pauseCopy, resumeCopy, cancelCopy ✅), store (selection + space check + copy state + pause/resume/cancel), format-size (shared utility), lib stubs  🚧
 
 Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```
@@ -115,7 +115,7 @@ Scans the given path (defaults to current directory) and prints file count and e
 Multi-platform build workflow (`.github/workflows/build.yml`) runs on every push/PR to `main`:
 
 | Platform | Target | Runner |
-|---|---|---|
+|---|---|---|---|
 | macOS (Apple Silicon) | `aarch64-apple-darwin` | `macos-latest` |
 | Windows | `x86_64-pc-windows-msvc` | `windows-latest` |
 | Linux | `x86_64-unknown-linux-gnu` | `ubuntu-latest` |

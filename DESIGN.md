@@ -10,19 +10,22 @@
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  app/     entry (main.tsx → App.tsx → HomePage)          │  │
 │  │  pages/   home: FolderSelection + ComparisonView +        │  │
-│  │           CopyProgressView + HistoryView                   │  │
+│  │           CopyPlanView + CopyProgressView + HistoryView    │  │
 │  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
 │  │  features/ folder-selection ✅, comparison-view ✅,      │  │
-│  │           copy-progress ✅, history-view ✅,             │  │
+│  │           copy-plan ✅, copy-progress ✅, history-view ✅,│  │
 │  │           scanner/comparator/copy-engine/history — stubs  │  │
 │  │  shared/  api (scanAndCompare, calculateSizeAndSpace,    │  │
 │  │           saveHistoryEntry, listHistory, copyFiles,      │  │
-│  │           onCopyProgress ✅), store (selection + space   │  │
-│  │           check + copy state), lib/ui — stubs             │  │
+│  │           onCopyProgress, pauseCopy, resumeCopy,         │  │
+│  │           cancelCopy ✅), store (selection + space check │  │
+│  │           + copy state + pause/resume/cancel),            │  │
+│  │           format-size (shared utility), lib/ui — stubs    │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  Package: music-sync (pnpm)  ·  Vite dev on :1420               │
-│  State: Zustand (selection + space check)  ·                    │
+│  State: Zustand (selection + space check + copy + pause/       │
+│         resume/cancel + verify toggle)                          │
 │  Tests: Vitest + jsdom + RTL                                    │
 └─────────────────────────────┬──────────────────────────────────┘
                               │ Tauri IPC (invoke / events)
@@ -30,8 +33,8 @@
 │                    Tauri Rust Backend                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  src-tauri/                                              │  │
-│  │  ├── src/lib.rs      Tauri builder + 5 commands          │  │
-│  │  ├── src/commands/   compare.rs + space.rs + copy.rs + history.rs     │  │
+│  │  ├── src/lib.rs      Tauri builder + 7 commands          │  │
+│  │  ├── src/commands/   compare.rs + space.rs + copy.rs (+ pause_copy, resume_copy, cancel_copy) + history.rs     │  │
 │  │  ├── src/main.rs     Platform entry point                │  │
 │  │  ├── capabilities/   core + dialog + core:event:default  │  │
 │  │  ├── migrations/     001_sync_tables.sql                 │  │
@@ -174,7 +177,8 @@ atomic writes, and optional BLAKE3 verification.
   standard engine.
 - **Sequential I/O:** files are processed one at a time toward the same
   destination — this matches the expected bottleneck (DAC/USB write speed).
-  Failure of one file does not stop the queue.
+  Failure of one file does not stop the queue. Cancel mid-queue marks
+  remaining items as `Cancelled`; cancel mid-write cleans up the `.tmp` file.
 - **Chunked streaming:** each file is read in configurable-size chunks and
   written, avoiding loading entire files into memory.
 - **Atomic write via `.tmp` + rename:** each file is first written to a
@@ -184,6 +188,14 @@ atomic writes, and optional BLAKE3 verification.
   BLAKE3 hash of the source file is computed during the streaming read, then
   the temp file is re-hashed after write and compared. On mismatch, the temp
   file is deleted and the item is marked `Failed`.
+- **Pause/Resume/Cancel via CopyHandle/CopyController:** `CopyHandle` (read-
+  side, consumed by the engine) and `CopyController` (write-side, handed to
+  Tauri commands) are created as a pair via `CopyHandle::new_pair()`. The
+  controller provides `pause()`, `resume()`, and `cancel()` methods. Pause
+  blocks the engine loop between files via a `tokio::sync::watch` channel;
+  cancel sets an `AtomicBool` flag checked before each file and during
+  verification reads. Cancelled items are marked `CopyStatus::Cancelled` and
+  in-progress `.tmp` files are cleaned up.
 - **Orphan cleanup:** `cleanup_tmp_files(root)` recursively removes leftover
   `.musicsync.tmp` files from interrupted copies. Called at Tauri command
   startup before each copy run.
@@ -202,14 +214,16 @@ atomic writes, and optional BLAKE3 verification.
 - No batch-level progress — per-file events are emitted; batch-level summary
   is left to the caller.
 
-**Test coverage:** 37 tests covering normal file copy, atomic `.tmp` + rename
+**Test coverage:** 48 tests covering normal file copy, atomic `.tmp` + rename
 (no temp left on success or failure), optional BLAKE3 verification, subfolder
 structure preservation, permission-denied on source and destination, missing
 source, empty queues, empty files, unsafe path rejection, chunk-level progress
 events, exact chunk multiples, odd remainder sizes, mixed verify/non-verify
 files, dropped receiver resilience, error display formatting, serialization
 roundtrip, `is_safe_relative` edge cases, `cleanup_tmp_files` orphan cleanup,
-and `tmp_path` utility correctness.
+`tmp_path` utility correctness, pause/resume behavior (blocking between files,
+no re-copy on resume), cancel during file/verify phases with tmp cleanup, and
+corruption detection via hash mismatch.
 
 ### 6. Tauri App Crate (`music-sync`)
 
@@ -219,7 +233,7 @@ and `tmp_path` utility correctness.
 - Registers `tauri-plugin-dialog` for native file dialogs.
 - SQLite database initialized at app setup: `HistoryDb::open_or_create()` in
   the platform app data directory, injected via `app.manage(db)`.
-- Exposes five commands in a `commands` module:
+- Exposes seven commands in a `commands` module:
   - `scan_and_compare(source_path, dest_path, level)`:
     - Validates both paths, runs concurrent `scan_pair()` with progress events
       (`scan:progress` + `scan:done`), then compares and returns `ComparisonResult`.
@@ -232,12 +246,21 @@ and `tmp_path` utility correctness.
   - `copy_files(source_root, destination_root, items)`:
     - Cleans up orphaned `.musicsync.tmp` files from prior interrupted copies
       on the destination via `cleanup_tmp_files()`.
+    - Creates a `CopyHandle`/`CopyController` pair and stores the controller
+      in a global `OnceLock<Mutex<Option<CopyController>>>` for pause/resume/
+      cancel access from other commands.
     - Spawns a progress relay task (`copy:progress` + `copy:done` events),
       then delegates to `CopyEngine::execute()` for atomic streaming copy
-      with optional BLAKE3 verification.
+      with optional BLAKE3 verification and cancel signal checks.
     - Core logic extracted as `copy_files_inner()` for direct unit testing
-      without a Tauri runtime (3 tests).
+      without a Tauri runtime (4 tests).
     - Returns `Vec<CopyItemResult>` with per-file status.
+  - `pause_copy()` / `resume_copy()` / `cancel_copy()`:
+    - Access the active controller via the global `OnceLock`.
+    - `pause_copy` sets a `watch` channel to block the engine between files.
+    - `resume_copy` clears the watch signal.
+    - `cancel_copy` sets an `AtomicBool` to stop the engine; in-progress
+      files' `.tmp` files are cleaned up.
   - `save_history_entry(entry)`:
     - Inserts a `SyncHistoryEntry` via `HistoryDb::insert_entry()`.
   - `list_history(page, page_size)`:
@@ -253,8 +276,9 @@ and `tmp_path` utility correctness.
 **Current state:**
 - **Entities layer:** TypeScript interfaces mirror all domain types.
   Notable: `CopyStatus` uses a tagged union (`{ Failed: string } | "Pending" | ...`
-  to match Rust's `enum` with data in serde JSON. History types `SyncHistoryEntry`
-  and `HistoryPage` are also mirrored.
+  to match Rust's `enum` with data in serde JSON. Includes `Cancelled` for
+  cancelled-by-user state. History types `SyncHistoryEntry` and `HistoryPage`
+  are also mirrored.
 - **API layer:** `src/shared/api/index.ts` provides:
   - `scanAndCompare(sourcePath, destPath, level)` — wraps `invoke("scan_and_compare", ...)`.
   - `onScanProgress(callback)` — subscribes to `scan:progress` Tauri events.
@@ -263,23 +287,31 @@ and `tmp_path` utility correctness.
   - `listHistory(page, pageSize)` — wraps `invoke("list_history", ...)`.
   - `copyFiles(sourceRoot, destinationRoot, items)` — wraps `invoke("copy_files", ...)`.
   - `onCopyProgress(callback)` — subscribes to `copy:progress` Tauri events.
+  - `pauseCopy()` / `resumeCopy()` / `cancelCopy()` — wraps `invoke("pause_copy")`,
+    `invoke("resume_copy")`, `invoke("cancel_copy")` for flow control.
   - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, `HistoryPage`,
     `CopyProgress`, `CopyItemResult`, and `CopyFileItem` TS interfaces.
 - **Features:** `folder-selection` (native folder picker + comparison level selector,
-  12 tests) and `comparison-view` (summary stat cards + entry table with selection +
-  space check panel, 57 tests) are implemented. `copy-progress` (progress bar,
-  file list, error display, 31 tests) and `history-view` (paginated sync history
-  table, 21 tests) are also implemented. Remaining stubs: `scanner`, `comparator`,
-  `copy-engine`, `history` (empty barrel exports).
+  12 tests), `comparison-view` (summary stat cards + entry table with selection +
+  space check panel, 57 tests), `copy-plan` (selected file list, size summary,
+  BLAKE3 verify toggle, space check, 21 tests — available as standalone component
+  but not yet wired into HomePage), `copy-progress` (progress bar, file list,
+  pause/resume/cancel controls, error display, 50 tests), and `history-view`
+  (paginated sync history table, 22 tests) are implemented. Remaining stubs:
+  `scanner`, `comparator`, `copy-engine`, `history` (empty barrel exports).
 - **Page:** `HomePage` orchestrates the full pipeline: folder selection → scan with
   progress → comparison results → copy with progress → history save. Also toggles
   `HistoryView` panel showing past sync runs.
+- **Shared utility:** `src/shared/format-size.ts` — `formatSize(bytes)` extracted
+  from inline code for reuse across `comparison-view`, `copy-plan`, `copy-progress`,
+  and `history-view`.
 - **Store:** Zustand `useAppStore` with real state: `selectedPaths` (string[]),
   `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, `fetchSpaceInfo`
   (calls `calculate_size_and_space`), plus copy state (`copyProgress`,
-  `copyResults`, `copyRunning`, `copyDone`, `copyError`, `startCopy`,
-  `onCopyProgress`, `resetCopy`), and verification toggle (`verifyCopy`,
-  `setVerifyCopy`). No counter.
+  `copyResults`, `copyRunning`, `copyPaused`, `copyDone`, `copyError`, `startCopy`,
+  `onCopyProgress`, `resetCopy`), flow control (`pause`, `resume`, `cancel`),
+  and verification toggle (`verifyCopy`, `setVerifyCopy`). Copy completion
+  auto-saves a `SyncHistoryEntry` (best-effort). No counter.
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
 - **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
   `@testing-library/jest-dom`.
@@ -336,28 +368,48 @@ Cascading diff per ADR-002 (L1 → L2)
 Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 ```
 
-### Copy Flow (implemented — Tauri command `copy_files`)
+### Copy Flow (implemented — Tauri commands `copy_files`, `pause_copy`, `resume_copy`, `cancel_copy`)
 
 ```
 Frontend: copyFiles(sourceRoot, destinationRoot, items)
     ↓ Tauri invoke
 commands::copy_files()
     ↓
+Create CopyHandle/CopyController pair
+Store controller in global OnceLock for pause/resume/cancel access
+    ↓
 Spawning progress relay task → listens for CopyProgress, emits "copy:progress"
     ↓
-CopyEngine::execute()                   ← sequential, per-item loop
+CopyEngine::execute(..., handle)        ← sequential, per-item loop
+    ├── handle.is_cancelled()?          ← break if cancelled (remaining items → Cancelled)
+    ├── handle.wait_if_paused()         ← block until resumed or cancelled
     ├── is_safe_relative(item.path)?    ← rejects ".." without I/O
     ├── create_dir_all(dst.parent())    ← auto-create subdirectories
     ├── open source file                ← tokio::fs::File::open
-    ├── create destination file         ← tokio::fs::File::create
+    ├── create destination (.tmp) file  ← tokio::fs::File::create
     ├── chunked read/write loop         ← default 1 MiB chunks
+    │   ├── handle.is_cancelled()?      ← cancel mid-file → clean up .tmp
     │   └── after each chunk:           ← progress_tx.send(CopyProgress { bytesCopied, ... })
+    ├── optional BLAKE3 verify          ← re-read .tmp, compare hash
+    │   └── handle.is_cancelled()?      ← cancel during verify → clean up .tmp
+    ├── tokio::fs::rename(.tmp → dst)   ← atomic rename
+    │   └── on failure → clean up .tmp, emit CopyStatus::Failed
     ├── on success → CopyStatus::Done
     └── on error → CopyStatus::Failed(reason)  ← continues to next item
     ↓
-Vec<CopyItemResult> (per-file status)
+Vec<CopyItemResult> (per-file status, includes Cancelled)
     ↓ Tauri return
 Frontend receives results
+
+Control channel (concurrent with copy):
+
+Frontend: pauseCopy() / resumeCopy() / cancelCopy()
+    ↓ Tauri invoke
+pause_copy() / resume_copy() / cancel_copy()
+    ↓ (via global OnceLock)
+CopyController::pause() / .resume() / .cancel()
+    ↓
+Engine reads the signal before each file / each verify chunk
 ```
 
 ## External Dependencies
@@ -390,6 +442,6 @@ Frontend receives results
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 22 tests, in-memory SQLite — insert, paginate, status update, edge cases |
-| Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`). Copy and history commands exercised via crate tests |
-| Copy Engine | `cargo test` (tokio) | 37 tests — atomic write, optional verification, error handling, chunk edge cases, orphan cleanup, serialization |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 39 (CopyProgressView) + 22 (HistoryView) + 24 (store) |
+| Tauri commands | `cargo test` | 18 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) + 4 (copy `copy_files_inner`) |
+| Copy Engine | `cargo test` (tokio) | 48 tests — atomic write, optional verification, pause/resume/cancel, error handling, chunk edge cases, orphan cleanup, corruption detection, serde |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 21 (CopyPlanView) + 50 (CopyProgressView) + 22 (HistoryView) + 24 (store) |
