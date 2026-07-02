@@ -1,6 +1,24 @@
-use music_sync_copy_engine::{CopyEngine, CopyItem, CopyItemResult, CopyProgress};
+use music_sync_copy_engine::{CopyController, CopyEngine, CopyHandle, CopyItem, CopyItemResult, CopyProgress};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::Emitter;
+
+/// Shared access to the currently active copy controller, if any.
+static ACTIVE_CONTROLLER: std::sync::OnceLock<Mutex<Option<CopyController>>> =
+    std::sync::OnceLock::new();
+
+fn active_controller() -> &'static Mutex<Option<CopyController>> {
+    ACTIVE_CONTROLLER.get_or_init(|| Mutex::new(None))
+}
+
+/// Drop guard that clears the active controller on drop (normal return or panic).
+struct ClearController;
+
+impl Drop for ClearController {
+    fn drop(&mut self) {
+        *active_controller().lock().unwrap() = None;
+    }
+}
 
 /// Core copy logic extracted for testing without Tauri runtime.
 #[allow(dead_code)]
@@ -8,6 +26,7 @@ pub async fn copy_files_inner(
     source_root: &str,
     destination_root: &str,
     items: &[CopyItem],
+    handle: &CopyHandle,
 ) -> Result<Vec<CopyItemResult>, String> {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -23,6 +42,7 @@ pub async fn copy_files_inner(
             &PathBuf::from(destination_root),
             items,
             progress_tx,
+            handle,
         )
         .await;
 
@@ -47,7 +67,7 @@ pub async fn copy_files(
         return Ok(Vec::new());
     }
 
-    // Clean up orphaned .tmp files from previous interrupted copies on this destination
+    // Clean up orphaned .tmp files from previous interrupted copies
     let _ = cleanup_tmp_files(&destination_root);
 
     let (progress_tx, mut progress_rx) =
@@ -61,6 +81,17 @@ pub async fn copy_files(
         let _ = emit_app.emit("copy:done", ());
     });
 
+    let (handle, controller) = CopyHandle::new_pair();
+
+    // Store controller for pause/resume/cancel access from other commands
+    {
+        let mut guard = active_controller().lock().unwrap();
+        *guard = Some(controller);
+    }
+
+    // Drop guard clears the controller even if execute() panics
+    let _clear = ClearController;
+
     let engine = CopyEngine::new();
     let results = engine
         .execute(
@@ -68,10 +99,47 @@ pub async fn copy_files(
             &PathBuf::from(&destination_root),
             &items,
             progress_tx,
+            &handle,
         )
         .await;
 
     Ok(results)
+}
+
+#[tauri::command]
+pub async fn pause_copy() -> Result<(), String> {
+    let guard = active_controller().lock().unwrap();
+    match guard.as_ref() {
+        Some(ctrl) => {
+            ctrl.pause();
+            Ok(())
+        }
+        None => Err("No active copy in progress".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn resume_copy() -> Result<(), String> {
+    let guard = active_controller().lock().unwrap();
+    match guard.as_ref() {
+        Some(ctrl) => {
+            ctrl.resume();
+            Ok(())
+        }
+        None => Err("No active copy in progress".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_copy() -> Result<(), String> {
+    let guard = active_controller().lock().unwrap();
+    match guard.as_ref() {
+        Some(ctrl) => {
+            ctrl.cancel();
+            Ok(())
+        }
+        None => Err("No active copy in progress".into()),
+    }
 }
 
 #[cfg(test)]
@@ -81,7 +149,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_items_returns_empty_vec() {
-        let result = copy_files_inner("/tmp/src", "/tmp/dst", &[]).await;
+        let (handle, _ctrl) = CopyHandle::new_pair();
+        let result = copy_files_inner("/tmp/src", "/tmp/dst", &[], &handle).await;
         assert!(result.unwrap().is_empty());
     }
 
@@ -89,17 +158,20 @@ mod tests {
     async fn copies_single_file() {
         let src_dir = TempDir::new().unwrap();
         let dst_dir = TempDir::new().unwrap();
+        let (handle, _ctrl) = CopyHandle::new_pair();
 
         std::fs::write(src_dir.path().join("song.flac"), b"audio data").unwrap();
 
         let items = vec![CopyItem {
             relative_path: PathBuf::from("song.flac"),
+            verify: false,
         }];
 
         let results = copy_files_inner(
             &src_dir.path().to_string_lossy(),
             &dst_dir.path().to_string_lossy(),
             &items,
+            &handle,
         )
         .await
         .unwrap();
@@ -115,6 +187,7 @@ mod tests {
     async fn copies_multiple_files() {
         let src_dir = TempDir::new().unwrap();
         let dst_dir = TempDir::new().unwrap();
+        let (handle, _ctrl) = CopyHandle::new_pair();
 
         std::fs::write(src_dir.path().join("a.flac"), b"aaa").unwrap();
         std::fs::write(src_dir.path().join("b.flac"), b"bbb").unwrap();
@@ -122,9 +195,11 @@ mod tests {
         let items = vec![
             CopyItem {
                 relative_path: PathBuf::from("a.flac"),
+                verify: false,
             },
             CopyItem {
                 relative_path: PathBuf::from("b.flac"),
+                verify: false,
             },
         ];
 
@@ -132,6 +207,7 @@ mod tests {
             &src_dir.path().to_string_lossy(),
             &dst_dir.path().to_string_lossy(),
             &items,
+            &handle,
         )
         .await
         .unwrap();
@@ -147,15 +223,18 @@ mod tests {
     async fn missing_source_returns_error_per_item() {
         let src_dir = TempDir::new().unwrap();
         let dst_dir = TempDir::new().unwrap();
+        let (handle, _ctrl) = CopyHandle::new_pair();
 
         let items = vec![CopyItem {
             relative_path: PathBuf::from("nonexistent.flac"),
+            verify: false,
         }];
 
         let results = copy_files_inner(
             &src_dir.path().to_string_lossy(),
             &dst_dir.path().to_string_lossy(),
             &items,
+            &handle,
         )
         .await
         .unwrap();

@@ -11,6 +11,9 @@ pub fn run() {
             commands::compare::scan_and_compare,
             commands::space::calculate_size_and_space,
             commands::copy::copy_files,
+            commands::copy::pause_copy,
+            commands::copy::resume_copy,
+            commands::copy::cancel_copy,
             commands::history::save_history_entry,
             commands::history::list_history,
         ])
