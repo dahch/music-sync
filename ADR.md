@@ -127,15 +127,15 @@ hash. Each has trade-offs between speed and certainty.
 ## ADR-005: Frontend State Management
 
 - **Date:** 2026-07-01
-- **Status:** Accepted (Zustand store scaffolded with counter example)
+- **Status:** Accepted (Zustand store implemented with selection + space check)
 
 ### Decision
 
 **Zustand** (not Redux) for UI state:
 - The heavy state (comparison tree, results) lives in the Rust core and is
   queried/paginated via Tauri IPC — not duplicated in JS.
-- Zustand store only holds: current user selection (checkboxes), view filters,
-  active task progress.
+- Zustand store holds: current user selection (checkboxes), space check state,
+  view filters (planned), active task progress (planned).
 - Virtualized list rendering (`@tanstack/react-virtual` planned) for 50k+
   entries.
 
@@ -143,6 +143,8 @@ hash. Each has trade-offs between speed and certainty.
 
 - Minimal JS memory footprint even with large scan results.
 - Keeps the store simple — no middleware, minimal boilerplate.
+- Store actions (`toggleSelect`, `selectOnly`, `deselectAll`, `fetchSpaceInfo`)
+  directly map to user interactions and Tauri IPC calls.
 
 ---
 

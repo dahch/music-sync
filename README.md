@@ -20,16 +20,16 @@ src-tauri/
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
 ├── capabilities/        # Tauri v2: core + dialog + core:event:default permissions
 ├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
-├── src/                 # Tauri entry (main.rs + lib.rs) — commands::scan_and_compare  🚧
+├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅
 ├── Cargo.toml           # Rust workspace root
 └── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 
 src/                     # Frontend (Feature-Sliced Design)
 ├── app/                 # App entry (main.tsx → App.tsx → HomePage)
-├── pages/               # home: FolderSelection + ComparisonView                      🚧
+├── pages/               # home: FolderSelection + ComparisonView                      ✅
 ├── features/            # folder-selection ✅, comparison-view ✅, rest stubs          🚧
 ├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile…   ✅
-└── shared/              # api (scanAndCompare ✅), store (counter), lib/ui stubs       🚧
+└── shared/              # api (scanAndCompare + calculateSizeAndSpace ✅), store (selection + space check), lib stubs  🚧
 
 Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```

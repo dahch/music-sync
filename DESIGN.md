@@ -25,13 +25,13 @@
 │                    Tauri Rust Backend                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  src-tauri/                                              │  │
-│  │  ├── src/lib.rs      Tauri builder + scan_and_compare    │  │
-│  │  ├── src/commands/   compare.rs (scan_and_compare cmd)   │  │
+│  │  ├── src/lib.rs      Tauri builder + 2 commands          │  │
+│  │  ├── src/commands/   compare.rs + space.rs               │  │
 │  │  ├── src/main.rs     Platform entry point                │  │
 │  │  ├── capabilities/   core + dialog + core:event:default  │  │
 │  │  ├── migrations/     001_sync_tables.sql                 │  │
 │  │  ├── tauri.conf.json App configuration                   │  │
-│  │  └── crates/         Workspace members (5 crates)        │  │
+│  │  └── crates/         Workspace members (6 crates)        │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────┬──────────────────────────────────┘
                               │
@@ -153,11 +153,16 @@ preservation.
 
 **Current state:**
 - Registers `tauri-plugin-dialog` for native file dialogs.
-- Exposes one command (`scan_and_compare`) in a `commands` module:
-  - Accepts `source_path`, `dest_path`, `level` string.
-  - Validates both paths, runs concurrent `scan_pair()` with progress events
-    (`scan:progress`), then compares and returns `ComparisonResult`.
-  - `parse_comparison_level()` helper tested separately (7 tests).
+- Exposes two commands in a `commands` module:
+  - `scan_and_compare(source_path, dest_path, level)`:
+    - Validates both paths, runs concurrent `scan_pair()` with progress events
+      (`scan:progress` + `scan:done`), then compares and returns `ComparisonResult`.
+    - `parse_comparison_level()` helper tested separately (7 tests).
+  - `calculate_size_and_space(destination_root, selected_paths)`:
+    - Computes total size of selected files and queries free space on
+      destination via `fs2::available_space`.
+    - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
+    - Tested separately (6 tests).
 - Window title set at runtime: "MusicSync".
 - Capability `default.json` grants `core:default`, `dialog:default`,
   `core:event:default` (needed for frontend progress event subscription).
@@ -173,12 +178,16 @@ preservation.
 - **API layer:** `src/shared/api/index.ts` provides:
   - `scanAndCompare(sourcePath, destPath, level)` — wraps `invoke("scan_and_compare", ...)`.
   - `onScanProgress(callback)` — subscribes to `scan:progress` Tauri events.
+  - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — wraps `invoke("calculate_size_and_space", ...)`.
+  - Exports `ScanProgress` and `SpaceInfo` TS interfaces.
 - **Features:** `folder-selection` (native folder picker + comparison level selector,
-  12 tests) and `comparison-view` (summary stat cards + entry table, 30 tests)
-  are implemented. Other features (`scanner`, `comparator`, `copy-engine`,
-  `history`) are empty barrels.
+  12 tests) and `comparison-view` (summary stat cards + entry table with selection +
+  space check panel, 57 tests) are implemented. Other features (`scanner`, `comparator`,
+  `copy-engine`, `history`) are empty barrels.
 - **Page:** `HomePage` orchestrates the scan→compare flow: idle → scanning (progress display) → done (comparison view) → error.
-- **Store:** Zustand `useAppStore` with a counter — proof of concept.
+- **Store:** Zustand `useAppStore` with real state: `selectedPaths` (string[]),
+  `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, and `fetchSpaceInfo`
+  (calls `calculate_size_and_space`). No counter.
 - **Aliasing:** `@/` resolves to `src/` via Vite resolve alias.
 - **Test setup:** Vitest with jsdom environment, `@testing-library/react`,
   `@testing-library/jest-dom`.
@@ -244,6 +253,7 @@ Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 | `serde` / `serde_json` | 1 | Serialization | Tauri IPC requires serde |
 | `tokio` | 1 | Async runtime | Scanner I/O concurrency |
 | `rusqlite` | 0.31 | SQLite | Embedded DB (bundled) |
+| `fs2` | 0.4 | Free disk space query | Cross-platform `available_space()` |
 | `react` / `react-dom` | ^18.3 | UI framework | ADR-001 |
 | `zustand` | ^5 | State management | ADR-005 |
 | `@tauri-apps/api` | ^2 | Tauri IPC bindings | Required by Tauri |
@@ -263,6 +273,6 @@ Vec<ComparisonEntry> + ComparisonStats (auto-computed by ComparisonResult::new)
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
 | History | `cargo test` | 12 tests, in-memory SQLite |
-| Tauri commands | `cargo test` | 7 tests — `parse_comparison_level` validation |
+| Tauri commands | `cargo test` | 13 tests — 7 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) |
 | Copy Engine | — | None yet |
-| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 30 (ComparisonView) |
+| Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) |

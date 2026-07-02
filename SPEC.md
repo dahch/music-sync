@@ -98,7 +98,8 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
   - `folder-selection` — source/dest folder picker (via `tauri-plugin-dialog`
     native dialogs) with comparison level selector (`Fast`, `Metadata`, `Strict`). 12 tests.
   - `comparison-view` — summary stat cards + table of entries with color-coded
-    status (New/Orphan/Identical/Different). 30 tests.
+    status (New/Orphan/Identical/Different) + selection panel with space
+    check. 57 tests.
   - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs.
 - **Entities:** TypeScript interfaces mirroring all Rust domain types
   (`MusicFile`, `DiffStatus`, `ComparisonLevel`, `CopyStatus`, `ComparisonStats`,
@@ -106,7 +107,9 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 - **API layer:** `src/shared/api/index.ts` provides:
   - `scanAndCompare(sourcePath, destPath, level)` — invokes Tauri `scan_and_compare`.
   - `onScanProgress(callback)` — subscribes to `scan:progress` events.
-- **Store:** Zustand store with counter example (`count`, `increment`).
+  - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — invokes Tauri `calculate_size_and_space`.
+  - Exports `ScanProgress` and `SpaceInfo` TS interfaces.
+- **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
 - **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
 ### 6. Tauri Integration (`src-tauri/src/`)
@@ -114,12 +117,17 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 **Status: 🚧 Partial — scan→compare wired, no copy or history commands yet**
 
 - Tauri v2 app with dialog plugin registered.
-- One real command (`scan_and_compare`):
-  - Accepts `source_path`, `dest_path`, `level` string arguments.
-  - Validates both paths, spawns concurrent source/dest scan via
-    `tokio::try_join!`, streams `scan:progress` events to the frontend,
-    then runs the comparator and returns `ComparisonResult`.
-  - Helper `parse_comparison_level()` tested directly (7 unit tests).
+- Two real commands:
+  - `scan_and_compare(source_path, dest_path, level)`:
+    - Validates both paths, spawns concurrent source/dest scan via
+      `tokio::try_join!`, streams `scan:progress` events to the frontend
+      (then emits `scan:done`), then runs the comparator and returns `ComparisonResult`.
+    - Helper `parse_comparison_level()` tested directly (7 unit tests).
+  - `calculate_size_and_space(destination_root, selected_paths)`:
+    - Computes total size of selected files and queries free space on
+      destination via `fs2::available_space`.
+    - Returns `SpaceInfo { totalSelectedSize, freeSpaceOnDestination }`.
+    - Tested directly (6 unit tests).
 - Single window (1200×800, resizable), title "MusicSync".
 - Capabilities: `core:default`, `dialog:default`, `core:event:default`.
 - Bundle targets: all (macOS .dmg, Windows .msi, Linux .AppImage).
@@ -128,8 +136,8 @@ Level 1 fast-path, Strict delegation, root path preservation, duplicate edge cas
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 15 (scanner) + 30 (comparator) + 12 (history) + 35 (domain) + 7 (commands) = passes |
-| Frontend tests | 12 (FolderSelection) + 30 (ComparisonView) — Vitest + jsdom |
+| Rust test suite | 15 (scanner) + 30 (comparator) + 12 (history) + 35 (domain) + 13 (commands) = passes |
+| Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |
 | Binary size | Not measured yet (dev build) |
