@@ -50,9 +50,9 @@ TypeScript types in `src/entities/`.
 **Test coverage:** 15 tests including empty directories, nested directories,
 case-insensitive extensions, 20k-file benchmark, concurrency (`scan_pair`).
 
-### 2. Schema Migration System (`src-tauri/crates/history/`)
+### 2. Schema Migration System + CRUD (`src-tauri/crates/history/`)
 
-**Status: 🚧 Partial (migrations done, no CRUD)**
+**Status: ✅ Implemented (migrations + CRUD)**
 
 - Versioned SQLite migrations via `rusqlite` (bundled).
 - Tracks applied migrations in `_schema_version` table.
@@ -61,9 +61,18 @@ case-insensitive extensions, 20k-file benchmark, concurrency (`scan_pair`).
   - `sync_history` — sync run records with file counts, bytes, status.
 - Idempotent: re-running migrations skips already-applied versions.
 - Linear version sequence (no branching).
+- Full CRUD:
+  - `HistoryDb::open_or_create()` — at app startup, resolves app data dir and
+    opens/creates the SQLite database.
+  - `insert_entry()` / `list_history(page, page_size)` — insert and paginate
+    sync history entries.
+  - `update_entry_status()` — update sync status after completion/failure.
+  - `insert_profile()` — persist a `SyncProfile`.
+- Exposed via Tauri commands `save_history_entry` and `list_history`.
+- Frontend barrel stub still empty (no history UI component yet).
 
-**Test coverage:** 12 tests covering table creation, column presence, defaults,
-idempotency, error handling.
+**Test coverage:** 22 tests covering inserts, pagination (first/last/empty pages),
+status updates, profile linkage, error cases, idempotency, u64 boundary values.
 
 ### 3. Diff/Comparator (`src-tauri/crates/comparator/`)
 
@@ -123,24 +132,30 @@ error display formatting, and serialization roundtrip.
   - `comparison-view` — summary stat cards + table of entries with color-coded
     status (New/Orphan/Identical/Different) + selection panel with space
     check. 57 tests.
-  - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs.
+  - `scanner`, `comparator`, `copy-engine`, `history` — still empty barrel stubs
+    (history backend CRUD is complete, but no frontend UI component yet).
 - **Entities:** TypeScript interfaces mirroring all Rust domain types
   (`MusicFile`, `DiffStatus`, `ComparisonLevel`, `CopyStatus`, `ComparisonStats`,
-  `ComparisonEntry`, `ComparisonResult`, `CopyTask`, `SyncProfile`).
+  `ComparisonEntry`, `ComparisonResult`, `CopyTask`, `SyncProfile`,
+  `SyncHistoryEntry`, `HistoryPage`).
 - **API layer:** `src/shared/api/index.ts` provides:
   - `scanAndCompare(sourcePath, destPath, level)` — invokes Tauri `scan_and_compare`.
   - `onScanProgress(callback)` — subscribes to `scan:progress` events.
   - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — invokes Tauri `calculate_size_and_space`.
-  - Exports `ScanProgress` and `SpaceInfo` TS interfaces.
+  - `saveHistoryEntry(entry)` — invokes Tauri `save_history_entry`.
+  - `listHistory(page, pageSize)` — invokes Tauri `list_history`.
+  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, and `HistoryPage` TS interfaces.
 - **Store:** Zustand store with selected paths, space check state (`fetchSpaceInfo` via `calculate_size_and_space`), and actions (`toggleSelect`, `selectOnly`, `deselectAll`). No counter.
 - **Test setup:** Vitest with jsdom, `@testing-library/react`, `@testing-library/jest-dom`.
 
 ### 6. Tauri Integration (`src-tauri/src/`)
 
-**Status: 🚧 Partial — scan→compare→copy wired, no history commands yet**
+**Status: 🚧 Partial — scan→compare→copy→history wired, no copy UI yet**
 
 - Tauri v2 app with dialog plugin registered.
-- Three real commands:
+- SQLite database initialized at app startup in the platform app data directory
+  (`HistoryDb::open_or_create`), managed via `app.manage(db)` for state injection.
+- Five real commands:
   - `scan_and_compare(source_path, dest_path, level)`:
     - Validates both paths, spawns concurrent source/dest scan via
       `tokio::try_join!`, streams `scan:progress` events to the frontend
@@ -149,12 +164,18 @@ error display formatting, and serialization roundtrip.
   - `calculate_size_and_space(destination_root, selected_paths)`:
     - Computes total size of selected files and queries free space on
       destination via `fs2::available_space`.
-    - Returns `SpaceInfo { totalSelectedSize, freeSpaceOnDestination }`.
+    - Returns `SpaceInfo { total_selected_size, free_space_on_destination }`.
     - Tested directly (6 unit tests).
   - `copy_files(source_root, destination_root, items)`:
     - Relays `copy:progress` / `copy:done` events while delegating to
       `CopyEngine::execute()` for sequential streaming copy.
     - No unit tests yet (exercised via copy_engine crate tests).
+  - `save_history_entry(entry)`:
+    - Inserts a sync history record into SQLite.
+    - Uses `State<HistoryDb>` injected at app setup.
+  - `list_history(page, page_size)`:
+    - Returns a paginated `HistoryPage` of sync history entries.
+    - Orders by `started_at DESC`.
 - Single window (1200×800, resizable), title "MusicSync".
 - Capabilities: `core:default`, `dialog:default`, `core:event:default`.
 - Bundle targets: all (macOS .dmg, Windows .msi, Linux .AppImage).
@@ -163,7 +184,7 @@ error display formatting, and serialization roundtrip.
 
 | Aspect | Current State |
 |--------|--------------|
-| Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 12 (history) + 17 (copy_engine) + 14 (commands) = passes |
+| Rust test suite | 35 (domain) + 15 (scanner) + 30 (comparator) + 22 (history) + 17 (copy_engine) + 14 (commands) = passes |
 | Frontend tests | 12 (FolderSelection) + 57 (ComparisonView) + 11 (store) — Vitest + jsdom |
 | Frontend build | TypeScript compiles, Vite bundles |
 | CI | Builds on 4 targets (macOS ARM/Intel, Windows, Linux) |

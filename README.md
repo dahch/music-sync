@@ -16,11 +16,11 @@ src-tauri/
 │   ├── scanner/         # Filesystem scanner — tokio async I/O, progress, validation  ✅
 │   ├── comparator/      # Diff logic (ADR-002: 3-level) — L1+L2 ✅, L3 pending        🚧
 │   ├── copy_engine/     # Copy queue + progress — streaming copy, chunked I/O, error types ✅
-│   └── history/         # SQLite sync history — migrations done, no CRUD yet          🚧
+│   └── history/         # SQLite sync history — migrations + CRUD (insert, list, paginate) ✅
 ├── migrations/          # SQL migration files (001_sync_tables.sql)
 ├── capabilities/        # Tauri v2: core + dialog + core:event:default permissions
 ├── gen/schemas/         # Auto-generated Tauri capability schemas (gitignored)
-├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅, copy_files ✅
+├── src/                 # Tauri entry (main.rs + lib.rs) — commands: scan_and_compare ✅, calculate_size_and_space ✅, copy_files ✅, save_history_entry ✅, list_history ✅
 ├── Cargo.toml           # Rust workspace root
 └── tauri.conf.json      # Tauri v2 configuration (identifier: com.dahch.musicsync)
 
@@ -28,8 +28,8 @@ src/                     # Frontend (Feature-Sliced Design)
 ├── app/                 # App entry (main.tsx → App.tsx → HomePage)
 ├── pages/               # home: FolderSelection + ComparisonView                      ✅
 ├── features/            # folder-selection ✅, comparison-view ✅, rest stubs          🚧
-├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile…   ✅
-└── shared/              # api (scanAndCompare + calculateSizeAndSpace ✅), store (selection + space check), lib stubs  🚧
+├── entities/            # TS types: MusicFile, DiffStatus, CopyStatus, SyncProfile, SyncHistoryEntry…   ✅
+└── shared/              # api (scanAndCompare, calculateSizeAndSpace, saveHistoryEntry, listHistory ✅), store (selection + space check), lib stubs  🚧
 
 Legend: ✅ Implemented · 🚧 Partial · 🔧 Scaffold (structure, no logic yet)
 ```

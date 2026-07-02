@@ -13,7 +13,7 @@
 │  │  entities/ MusicFile, DiffStatus, CopyStatus, SyncProfile │  │
 │  │  features/ folder-selection ✅, comparison-view ✅,      │  │
 │  │           scanner/comparator/copy-engine/history — stubs  │  │
-│  │  shared/  api (scanAndCompare + calculateSizeAndSpace),  │  │
+│  │  shared/  api (scanAndCompare, calculateSizeAndSpace,    │  │
 │  │           store (selection + space check), lib/ui — stubs  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
@@ -26,8 +26,8 @@
 │                    Tauri Rust Backend                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  src-tauri/                                              │  │
-│  │  ├── src/lib.rs      Tauri builder + 3 commands          │  │
-│  │  ├── src/commands/   compare.rs + space.rs + copy.rs     │  │
+│  │  ├── src/lib.rs      Tauri builder + 5 commands          │  │
+│  │  ├── src/commands/   compare.rs + space.rs + copy.rs + history.rs     │  │
 │  │  ├── src/main.rs     Platform entry point                │  │
 │  │  ├── capabilities/   core + dialog + core:event:default  │  │
 │  │  ├── migrations/     001_sync_tables.sql                 │  │
@@ -50,8 +50,8 @@
 │                    ┌──────────┐       ┌──────────────────┐   │
 │                    │ history  │       │ Tauri commands   │   │
 │                    │ (rusqlite│       │ compare + space  │   │
-│                    │  bundled)│       │ + copy           │   │
-│                    │ 12 tests │       │ 14 tests         │   │
+│                    │  bundled)│       │ + copy + history │   │
+│                    │ 22 tests │       │ 14 tests         │   │
 │                    └──────────┘       └─────────────────┘    │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -99,7 +99,7 @@ streaming.
 
 ### 3. History Crate (`music-sync-history`)
 
-**Purpose:** SQLite schema management and (future) CRUD for sync history.
+**Purpose:** SQLite schema management and CRUD for sync history.
 
 **Design patterns used:**
 - **Embedded migration system:** Linear version sequence stored in
@@ -109,14 +109,28 @@ streaming.
   re-running is safe.
 - **Bundled SQLite:** `rusqlite` with `bundled` feature so no system
   SQLite is required.
+- **Connection managed via Tauri state:** `HistoryDb` is wrapped in
+  `Mutex<Connection>` and injected at app setup via `app.manage()`.
 
 **Schema (current migration `001_sync_tables.sql`):**
 - `sync_profiles` — saved source/destination pairs.
 - `sync_history` — individual sync run records.
 - `_schema_version` — migration tracking (internal).
 
-**Not implemented:** CRUD operations, query layer, app data directory
-resolution.
+**CRUD operations (implemented):**
+- `open_or_create(path)` — resolve app data dir, open/create SQLite DB,
+  run pending migrations.
+- `insert_entry(entry)` — insert a new sync history record.
+- `list_history(page, page_size)` — paginated list ordered by `started_at DESC`.
+- `update_entry_status(id, status, completed_at, error_message)` — update
+  a sync entry after completion or failure.
+- `insert_profile(profile)` — persist a `SyncProfile`.
+- Exposed via Tauri commands `save_history_entry` and `list_history`.
+- **Not implemented:** frontend UI component for history view.
+
+**Test coverage:** 22 tests covering inserts, pagination (first/last/empty/zero
+page), status updates, profile linkage, duplicate/error path handling,
+idempotency, u64 boundary values, and direct migration testing.
 
 ### 4. Comparator Crate (`music-sync-comparator`)
 
@@ -189,7 +203,9 @@ display formatting.
 
 **Current state:**
 - Registers `tauri-plugin-dialog` for native file dialogs.
-- Exposes three commands in a `commands` module:
+- SQLite database initialized at app setup: `HistoryDb::open_or_create()` in
+  the platform app data directory, injected via `app.manage(db)`.
+- Exposes five commands in a `commands` module:
   - `scan_and_compare(source_path, dest_path, level)`:
     - Validates both paths, runs concurrent `scan_pair()` with progress events
       (`scan:progress` + `scan:done`), then compares and returns `ComparisonResult`.
@@ -203,6 +219,10 @@ display formatting.
     - Spawns a progress relay task (`copy:progress` + `copy:done` events),
       then delegates to `CopyEngine::execute()` for sequential streaming copy.
     - Returns `Vec<CopyItemResult>` with per-file status.
+  - `save_history_entry(entry)`:
+    - Inserts a `SyncHistoryEntry` via `HistoryDb::insert_entry()`.
+  - `list_history(page, page_size)`:
+    - Returns a paginated `HistoryPage` via `HistoryDb::list_history()`.
 - Window title set at runtime: "MusicSync".
 - Capability `default.json` grants `core:default`, `dialog:default`,
   `core:event:default` (needed for frontend progress event subscription).
@@ -214,16 +234,20 @@ display formatting.
 **Current state:**
 - **Entities layer:** TypeScript interfaces mirror all domain types.
   Notable: `CopyStatus` uses a tagged union (`{ Failed: string } | "Pending" | ...`
-  to match Rust's `enum` with data in serde JSON.
+  to match Rust's `enum` with data in serde JSON. History types `SyncHistoryEntry`
+  and `HistoryPage` are also mirrored.
 - **API layer:** `src/shared/api/index.ts` provides:
   - `scanAndCompare(sourcePath, destPath, level)` — wraps `invoke("scan_and_compare", ...)`.
   - `onScanProgress(callback)` — subscribes to `scan:progress` Tauri events.
   - `calculateSizeAndSpace(destinationRoot, selectedPaths)` — wraps `invoke("calculate_size_and_space", ...)`.
-  - Exports `ScanProgress` and `SpaceInfo` TS interfaces.
+  - `saveHistoryEntry(entry)` — wraps `invoke("save_history_entry", ...)`.
+  - `listHistory(page, pageSize)` — wraps `invoke("list_history", ...)`.
+  - Exports `ScanProgress`, `SpaceInfo`, `SyncHistoryEntry`, and `HistoryPage` TS interfaces.
 - **Features:** `folder-selection` (native folder picker + comparison level selector,
   12 tests) and `comparison-view` (summary stat cards + entry table with selection +
   space check panel, 57 tests) are implemented. Other features (`scanner`, `comparator`,
-  `copy-engine`, `history`) are empty barrels.
+  `copy-engine`, `history`) are empty barrel stubs (history backend CRUD is complete,
+  but no frontend UI component yet).
 - **Page:** `HomePage` orchestrates the scan→compare flow: idle → scanning (progress display) → done (comparison view) → error.
 - **Store:** Zustand `useAppStore` with real state: `selectedPaths` (string[]),
   `spaceInfo`, `toggleSelect`, `selectOnly`, `deselectAll`, and `fetchSpaceInfo`
@@ -336,7 +360,7 @@ Frontend receives results
 | Domain logic | `cargo test` | 9 modules / 35 tests — serde roundtrip + business logic |
 | Scanner | `cargo test` (tokio) | 15 tests, real temp dirs |
 | Comparator | `cargo test` | 30 tests, HashMap index + mtime tolerance + Level 1 fast-path |
-| History | `cargo test` | 12 tests, in-memory SQLite |
-| Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`) |
+| History | `cargo test` | 22 tests, in-memory SQLite — insert, paginate, status update, edge cases |
+| Tauri commands | `cargo test` | 14 tests — 8 (compare `parse_comparison_level`) + 6 (space `calculate_size_and_space`). Copy and history commands exercised via crate tests |
 | Copy Engine | `cargo test` (tokio) | 17 tests — streaming copy, error handling, chunk edge cases, serialization |
 | Frontend | `pnpm test` (Vitest) | 12 (FolderSelection) + 57 (ComparisonView) + 11 (store) |
