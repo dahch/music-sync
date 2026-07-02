@@ -1,8 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ComparisonResult, SyncHistoryEntry, HistoryPage } from "@/entities/music-file";
+import type {
+  ComparisonResult,
+  SyncHistoryEntry,
+  HistoryPage,
+  CopyProgress,
+  CopyItemResult,
+} from "@/entities/music-file";
 
-export type { ComparisonResult, SyncHistoryEntry, HistoryPage } from "@/entities/music-file";
+export type {
+  ComparisonResult,
+  SyncHistoryEntry,
+  HistoryPage,
+  CopyProgress,
+  CopyItemResult,
+} from "@/entities/music-file";
 
 export interface ScanProgress {
   filesFound: number;
@@ -55,4 +67,28 @@ export async function listHistory(
   pageSize: number,
 ): Promise<HistoryPage> {
   return invoke("list_history", { page, pageSize });
+}
+
+export interface CopyFileItem {
+  relativePath: string;
+}
+
+export async function copyFiles(
+  sourceRoot: string,
+  destinationRoot: string,
+  items: CopyFileItem[],
+): Promise<CopyItemResult[]> {
+  return invoke("copy_files", {
+    sourceRoot,
+    destinationRoot,
+    items,
+  });
+}
+
+export function onCopyProgress(
+  callback: (progress: CopyProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<CopyProgress>("copy:progress", (event) => {
+    callback(event.payload);
+  });
 }
