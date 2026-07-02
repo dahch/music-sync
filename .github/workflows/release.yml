@@ -9,6 +9,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   build:
@@ -68,11 +69,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: bundles
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "MusicSync ${{ github.ref_name }}"
           draft: true
-          files: bundle-*/**/*
+          files: |
+            bundles/**/MusicSync_*.dmg
+            bundles/**/MusicSync_*.exe
+            bundles/**/MusicSync_*.msi
+            bundles/**/MusicSync_*.deb
+            bundles/**/MusicSync_*.rpm
+            bundles/**/MusicSync_*.AppImage
           fail_on_unmatched_files: false
